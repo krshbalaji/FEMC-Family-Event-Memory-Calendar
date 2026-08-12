@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 from typing import List, Optional
 
-from .models import Event, Memory, VisibilityLevel
+from .models import ContextDiscoveryResult, Event, EventWithMemories, Memory, VisibilityLevel
 from .repositories import CanonicalRepository, DerivedRepository
 from .services import (
     AuthorizationService,
@@ -93,6 +93,23 @@ class FEMCApi:
     def get_memory_for_session(self, session_id: str, memory_id: str) -> Memory:
         session = self._validate_session(session_id)
         return self.memory.get_memory_for_account(memory_id, session.account_id)
+
+    def get_event_with_memories_for_session(self, session_id: str, event_id: str) -> EventWithMemories:
+        session = self._validate_session(session_id)
+        event = self.event.get_event_for_account(event_id, session.account_id)
+        if event is None:
+            raise ValueError("Event does not exist")
+        memories = self.memory.list_memories_for_event_for_account(event_id, session.account_id)
+        return EventWithMemories(event=event, memories=memories)
+
+    def discover_context_for_session(self, session_id: str, family_context_id: str) -> ContextDiscoveryResult:
+        session = self._validate_session(session_id)
+        context = self.identity.resolve_family_context(session.account_id)
+        if context is None or context.id != family_context_id:
+            raise PermissionError("Account is not authorized for this family context")
+        calendar_entries = self.calendar.get_calendar_for_context(session.account_id, family_context_id)
+        memories = self.memory.list_memories_for_context_for_account(family_context_id, session.account_id)
+        return ContextDiscoveryResult(context=context, calendar_entries=calendar_entries, memories=memories)
 
     def search_for_session(self, session_id: str, query: str):
         session = self._validate_session(session_id)

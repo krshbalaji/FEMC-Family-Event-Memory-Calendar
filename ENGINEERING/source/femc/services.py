@@ -260,6 +260,40 @@ class MemoryService:
             raise PermissionError("Account is not authorized to view this memory")
         return memory
 
+    def list_memories_for_event_for_account(self, event_id: str, account_id: str) -> List[Memory]:
+        event = self.canonical.get_event(event_id)
+        if event is None:
+            raise ValueError("Event does not exist")
+        context = self.canonical.get_family_context(event.family_context_id) if event.family_context_id else None
+        if not self.auth.can_view_event(account_id, event, context):
+            raise PermissionError("Account is not authorized to view this event")
+        memories: List[Memory] = []
+        for memory in self.canonical.list_memories():
+            if memory.event_id != event_id:
+                continue
+            if self.auth.can_view_memory(account_id, memory, context):
+                memories.append(memory)
+        return memories
+
+    def list_memories_for_context_for_account(self, family_context_id: str, account_id: str) -> List[Memory]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+        memories: List[Memory] = []
+        for memory in self.canonical.list_memories():
+            if memory.event_id is None:
+                continue
+            event = self.canonical.get_event(memory.event_id)
+            if event is None or event.family_context_id != family_context_id:
+                continue
+            if not self.auth.can_view_event(account_id, event, context):
+                continue
+            if self.auth.can_view_memory(account_id, memory, context):
+                memories.append(memory)
+        return memories
+
 
 class SearchService:
     def __init__(self, derived: DerivedRepository) -> None:

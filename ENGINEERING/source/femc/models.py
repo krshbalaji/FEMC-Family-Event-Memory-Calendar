@@ -150,3 +150,17 @@ class CalendarProjectionEntry:
     status: EventStatus
     visibility: VisibilityLevel
     family_context_id: Optional[str] = None
+
+
+@dataclass
+class EventWithMemories:
+    event: Event
+    memories: List[Memory] = field(default_factory=list)
+
+
+@dataclass
+class ContextDiscoveryResult:
+    context: FamilyContext
+    calendar_entries: List[CalendarProjectionEntry] = field(default_factory=list)
+    memories: List[Memory] = field(default_factory=list)
+

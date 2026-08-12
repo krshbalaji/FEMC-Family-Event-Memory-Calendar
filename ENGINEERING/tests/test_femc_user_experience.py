@@ -69,6 +69,20 @@ def test_user_experience_end_to_end():
     event_results = api.search_for_session(session.session_id, "dinner")
     assert any(result.id == event.id for result in event_results)
 
+    # Retrieve event detail with attached memories through session
+    event_with_memories = api.get_event_with_memories_for_session(session.session_id, event.id)
+    assert event_with_memories.event.id == event.id
+    assert len(event_with_memories.memories) == 1
+    assert event_with_memories.memories[0].id == memory.id
+
+    # Discover authorized context content through session
+    discovery = api.discover_context_for_session(session.session_id, context.id)
+    assert discovery.context.id == context.id
+    assert len(discovery.calendar_entries) == 1
+    assert discovery.calendar_entries[0].event_id == event.id
+    assert len(discovery.memories) == 1
+    assert discovery.memories[0].id == memory.id
+
 
 def test_authorization_feedback_for_unauthorized_user():
     api = FEMCApi()
