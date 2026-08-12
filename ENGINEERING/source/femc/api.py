@@ -7,6 +7,7 @@ from .models import (
     Confidence,
     ContextDiscoveryResult,
     Event,
+    EventStatus,
     EventWithMemories,
     FamilyTopologyResult,
     Memory,
@@ -14,6 +15,7 @@ from .models import (
     RelationshipType,
     VisibilityLevel,
 )
+
 
 from .repositories import CanonicalRepository, DerivedRepository
 from .services import (
@@ -77,9 +79,30 @@ class FEMCApi:
         session = self._validate_session(session_id)
         return self.event.get_event_for_account(event_id, session.account_id)
 
-    def get_calendar_for_session(self, session_id: str, family_context_id: str):
+    def get_calendar_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        start_date: Optional[datetime.date] = None,
+        end_date: Optional[datetime.date] = None,
+    ):
         session = self._validate_session(session_id)
-        return self.calendar.get_calendar_for_context(session.account_id, family_context_id)
+        return self.calendar.get_calendar_for_context(
+            session.account_id,
+            family_context_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    def update_event_status_for_session(
+        self,
+        session_id: str,
+        event_id: str,
+        status: EventStatus,
+    ) -> Event:
+        session = self._validate_session(session_id)
+        return self.event.update_event_status(session.account_id, event_id, status)
+
 
     def create_memory_for_session(
         self,

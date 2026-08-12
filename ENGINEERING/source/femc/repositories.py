@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from typing import Dict, List, Optional
 
 from .models import (
@@ -7,6 +8,7 @@ from .models import (
     AuthenticatedSession,
     CalendarProjectionEntry,
     Event,
+    EventStatus,
     FamilyContext,
     Memory,
     Person,
@@ -14,6 +16,7 @@ from .models import (
     Relationship,
     SearchResultEntry,
 )
+
 
 
 class CanonicalRepository:
@@ -102,10 +105,29 @@ class DerivedRepository:
         self.calendar_entries.append(entry)
         return entry
 
-    def get_calendar_entries(self, family_context_id: Optional[str] = None) -> List[CalendarProjectionEntry]:
-        if family_context_id is None:
-            return list(self.calendar_entries)
-        return [entry for entry in self.calendar_entries if entry.family_context_id == family_context_id]
+    def get_calendar_entries(
+        self,
+        family_context_id: Optional[str] = None,
+        start_date: Optional[datetime.date] = None,
+        end_date: Optional[datetime.date] = None,
+    ) -> List[CalendarProjectionEntry]:
+        entries = self.calendar_entries
+        if family_context_id is not None:
+            entries = [entry for entry in entries if entry.family_context_id == family_context_id]
+        if start_date is not None:
+            entries = [entry for entry in entries if entry.date >= start_date]
+        if end_date is not None:
+            entries = [entry for entry in entries if entry.date <= end_date]
+        return list(entries)
+
+    def update_calendar_entry_status(self, event_id: str, status: EventStatus) -> bool:
+        updated = False
+        for entry in self.calendar_entries:
+            if entry.event_id == event_id:
+                entry.status = status
+                updated = True
+        return updated
+
 
     def add_search_entry(self, entry: SearchResultEntry) -> SearchResultEntry:
         self.search_entries.append(entry)

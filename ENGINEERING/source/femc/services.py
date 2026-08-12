@@ -233,6 +233,23 @@ class EventService:
     def list_events(self) -> List[Event]:
         return self.canonical.list_events()
 
+    def update_event_status(self, account_id: str, event_id: str, status: EventStatus) -> Event:
+        event = self.get_event(event_id)
+        if event is None:
+            raise ValueError("Event does not exist")
+        context = self.canonical.get_family_context(event.family_context_id) if event.family_context_id else None
+        if not self.auth.can_view_event(account_id, event, context):
+            raise PermissionError("Account is not authorized to modify this event")
+        if event.owner_id != account_id and (context is None or account_id not in context.member_ids):
+            raise PermissionError("Account is not authorized to update status of this event")
+
+        event.status = status
+        if event.provenance and event.provenance.audit_trail is not None:
+            event.provenance.audit_trail.append(f"status-updated-to-{status.value}")
+
+        self.derived.update_calendar_entry_status(event_id, status)
+        return event
+
 
 class CalendarService:
     def __init__(self, canonical: CanonicalRepository, derived: DerivedRepository, auth: AuthorizationService) -> None:
@@ -240,12 +257,23 @@ class CalendarService:
         self.derived = derived
         self.auth = auth
 
-    def get_calendar_for_context(self, account_id: str, family_context_id: str) -> List[CalendarProjectionEntry]:
+    def get_calendar_for_context(
+        self,
+        account_id: str,
+        family_context_id: str,
+        start_date: Optional[datetime.date] = None,
+        end_date: Optional[datetime.date] = None,
+    ) -> List[CalendarProjectionEntry]:
         context = self.canonical.get_family_context(family_context_id)
         if context is None:
             return []
-        entries = self.derived.get_calendar_entries(family_context_id)
+        entries = self.derived.get_calendar_entries(
+            family_context_id=family_context_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return [entry for entry in entries if self._can_view_projection(account_id, entry, context)]
+
 
     def _can_view_projection(self, account_id: str, entry: CalendarProjectionEntry, context: FamilyContext) -> bool:
         if entry.visibility == VisibilityLevel.PUBLIC:
