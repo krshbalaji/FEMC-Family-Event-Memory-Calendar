@@ -37,6 +37,15 @@ class AuthorizationService:
             return False
         return account_id in context.member_ids
 
+    def can_view_memory(self, account_id: str, memory: Memory, context: Optional[FamilyContext]) -> bool:
+        if memory.visibility == VisibilityLevel.PUBLIC:
+            return True
+        if memory.visibility == VisibilityLevel.PRIVATE:
+            return account_id == memory.subject_id
+        if memory.visibility == VisibilityLevel.FAMILY:
+            return context is not None and account_id in context.member_ids
+        return False
+
     def can_create_memory(self, account_id: str, memory: Memory, context: Optional[FamilyContext]) -> bool:
         if memory.visibility == VisibilityLevel.PUBLIC:
             return True
@@ -60,6 +69,12 @@ class IdentityService:
     def create_account(self, username: str, email: str, person_id: str) -> Account:
         account = Account(username=username, email=email, person_id=person_id)
         return self.canonical.add_account(account)
+
+    def resolve_family_context(self, account_id: str) -> Optional[FamilyContext]:
+        for context in self.canonical.list_family_contexts():
+            if account_id in context.member_ids:
+                return context
+        return None
 
     def create_family_context(self, name: str, member_ids: Optional[List[str]] = None, created_by_id: str = "") -> FamilyContext:
         if member_ids is None:
@@ -150,6 +165,15 @@ class EventService:
     def get_event(self, event_id: str) -> Optional[Event]:
         return self.canonical.get_event(event_id)
 
+    def get_event_for_account(self, event_id: str, account_id: str) -> Optional[Event]:
+        event = self.get_event(event_id)
+        if event is None:
+            return None
+        context = self.canonical.get_family_context(event.family_context_id) if event.family_context_id else None
+        if not self.auth.can_view_event(account_id, event, context):
+            raise PermissionError("Account is not authorized to view this event")
+        return event
+
     def list_events(self) -> List[Event]:
         return self.canonical.list_events()
 
@@ -171,7 +195,8 @@ class CalendarService:
         if entry.visibility == VisibilityLevel.PUBLIC:
             return True
         if entry.visibility == VisibilityLevel.PRIVATE:
-            return account_id in context.member_ids
+            event = self.canonical.get_event(entry.event_id)
+            return event is not None and account_id == event.owner_id
         return account_id in context.member_ids
 
 
@@ -181,13 +206,20 @@ class MemoryService:
         self.derived = derived
         self.auth = auth
 
-    def create_memory(self, subject_id: str, narrative: str, visibility: VisibilityLevel, created_by_id: str) -> Memory:
+    def create_memory(self, subject_id: str, narrative: str, visibility: VisibilityLevel, created_by_id: str, event_id: Optional[str] = None) -> Memory:
         context = None
         for family_context in self.canonical.list_family_contexts():
             if subject_id in family_context.member_ids:
                 context = family_context
                 break
+        if event_id is not None:
+            event = self.canonical.get_event(event_id)
+            if event is None:
+                raise ValueError("Referenced event does not exist")
+            if event.family_context_id is not None and context is not None and event.family_context_id != context.id:
+                raise PermissionError("Event does not belong to the user's family context")
         memory = Memory(
+            event_id=event_id,
             subject_id=subject_id,
             narrative=narrative,
             visibility=visibility,
@@ -214,6 +246,19 @@ class MemoryService:
 
     def get_memory(self, memory_id: str) -> Optional[Memory]:
         return self.canonical.get_memory(memory_id)
+
+    def get_memory_for_account(self, memory_id: str, account_id: str) -> Optional[Memory]:
+        memory = self.get_memory(memory_id)
+        if memory is None:
+            return None
+        context = None
+        for family_context in self.canonical.list_family_contexts():
+            if memory.subject_id in family_context.member_ids:
+                context = family_context
+                break
+        if not self.auth.can_view_memory(account_id, memory, context):
+            raise PermissionError("Account is not authorized to view this memory")
+        return memory
 
 
 class SearchService:

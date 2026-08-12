@@ -125,6 +125,7 @@ class Event:
 @dataclass
 class Memory:
     id: str = field(default_factory=_new_id)
+    event_id: Optional[str] = None
     subject_id: str = ""
     narrative: str = ""
     recorded_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
