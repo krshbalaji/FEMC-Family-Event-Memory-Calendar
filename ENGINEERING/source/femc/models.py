@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+import dataclasses
+import datetime
+import enum
+import uuid
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+def _new_id() -> str:
+    return str(uuid.uuid4())
+
+
+class VisibilityLevel(str, enum.Enum):
+    PUBLIC = "public"
+    FAMILY = "family"
+    PRIVATE = "private"
+
+
+class EventStatus(str, enum.Enum):
+    PLANNED = "planned"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+
+
+class RelationshipType(str, enum.Enum):
+    PARENT = "parent"
+    CHILD = "child"
+    SIBLING = "sibling"
+    PARTNER = "partner"
+    MEMBER = "member"
+
+
+class Confidence(str, enum.Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ProvenanceSourceType(str, enum.Enum):
+    USER = "user"
+    SYSTEM = "system"
+    IMPORT = "import"
+
+
+@dataclass(frozen=True)
+class ProvenanceMetadata:
+    source_type: ProvenanceSourceType
+    source_id: str
+    created_by_id: str
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    audit_trail: List[str] = field(default_factory=list)
+
+
+@dataclass
+class Person:
+    id: str = field(default_factory=_new_id)
+    name: str = ""
+    birth_date: Optional[datetime.date] = None
+    relationships: List[str] = field(default_factory=list)
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class Account:
+    id: str = field(default_factory=_new_id)
+    username: str = ""
+    email: str = ""
+    person_id: str = ""
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class AuthenticatedSession:
+    session_id: str = field(default_factory=_new_id)
+    account_id: str = ""
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    expires_at: Optional[datetime.datetime] = None
+
+
+@dataclass
+class Relationship:
+    id: str = field(default_factory=_new_id)
+    source_person_id: str = ""
+    target_person_id: str = ""
+    relationship_type: RelationshipType = RelationshipType.MEMBER
+    confidence: Confidence = Confidence.MEDIUM
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class FamilyContext:
+    id: str = field(default_factory=_new_id)
+    name: str = ""
+    member_ids: List[str] = field(default_factory=list)
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    provenance: Optional[ProvenanceMetadata] = None
+
+
+@dataclass
+class Consent:
+    granted_by_id: str = ""
+    granted_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    scope: str = ""
+    is_active: bool = True
+
+
+@dataclass
+class Event:
+    id: str = field(default_factory=_new_id)
+    title: str = ""
+    description: str = ""
+    owner_id: str = ""
+    family_context_id: Optional[str] = None
+    start_time: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    end_time: Optional[datetime.datetime] = None
+    status: EventStatus = EventStatus.PLANNED
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+    consent: Optional[Consent] = None
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class Memory:
+    id: str = field(default_factory=_new_id)
+    subject_id: str = ""
+    narrative: str = ""
+    recorded_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+    provenance: Optional[ProvenanceMetadata] = None
+
+
+@dataclass
+class SearchResultEntry:
+    id: str
+    type: str
+    title: str
+    excerpt: str
+    visibility: VisibilityLevel
+
+
+@dataclass
+class CalendarProjectionEntry:
+    event_id: str
+    title: str
+    date: datetime.date
+    status: EventStatus
+    visibility: VisibilityLevel
+    family_context_id: Optional[str] = None
