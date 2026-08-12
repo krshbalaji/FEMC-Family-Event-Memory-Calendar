@@ -301,4 +301,23 @@ class ShareLink:
     created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
 
 
+@dataclass
+class DataExportResult:
+    export_id: str = field(default_factory=_new_id)
+    family_context_id: str = ""
+    exported_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    schema_version: str = "1.0"
+    provenance: Optional[ProvenanceMetadata] = None
+    records: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+
+
+@dataclass
+class ExportValidationResult:
+    is_valid: bool = True
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    record_counts: Dict[str, int] = field(default_factory=dict)
+
+
+
 

@@ -9,9 +9,12 @@ from .models import (
     CalendarProjectionEntry,
     Confidence,
     Consent,
+    DataExportResult,
     Event,
     EventStatus,
+    ExportValidationResult,
     FamilyContext,
+
     MediaAlbum,
     MediaItem,
     MediaType,
@@ -965,6 +968,230 @@ class SharingService:
             raise PermissionError("Only creator can revoke share link")
         share_link.is_revoked = True
         return share_link
+
+
+class DataPortabilityService:
+    def __init__(self, canonical: CanonicalRepository, derived: DerivedRepository, auth: AuthorizationService) -> None:
+        self.canonical = canonical
+        self.derived = derived
+        self.auth = auth
+
+    def export_family_context_for_account(self, account_id: str, family_context_id: str) -> DataExportResult:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized to export this family context")
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="femc-data-portability",
+            created_by_id=account_id,
+            audit_trail=["data-export-generated"],
+        )
+
+        records: Dict[str, List[Dict[str, Any]]] = {
+            "family_contexts": [],
+            "accounts": [],
+            "persons": [],
+            "relationships": [],
+            "events": [],
+            "memories": [],
+            "places": [],
+            "media_items": [],
+            "media_albums": [],
+            "notifications": [],
+            "share_links": [],
+        }
+
+        created_by = context.provenance.created_by_id if context.provenance else ""
+        records["family_contexts"].append({
+            "id": context.id,
+            "name": context.name,
+            "member_ids": list(context.member_ids),
+            "created_by_id": created_by,
+            "created_at": context.created_at.isoformat(),
+        })
+
+        for member_id in context.member_ids:
+            acc = self.canonical.get_account(member_id)
+            if acc:
+                records["accounts"].append({
+                    "id": acc.id,
+                    "username": acc.username,
+                    "email": acc.email,
+                    "person_id": acc.person_id,
+                    "created_at": acc.created_at.isoformat(),
+                })
+                person = self.canonical.get_person(acc.person_id)
+                if person and not any(p["id"] == person.id for p in records["persons"]):
+                    records["persons"].append({
+                        "id": person.id,
+                        "name": person.name,
+                        "birth_date": person.birth_date.isoformat() if person.birth_date else None,
+                    })
+
+        context_person_ids = {p["id"] for p in records["persons"]}
+        for rel in self.canonical.list_relationships():
+            if rel.source_person_id in context_person_ids and rel.target_person_id in context_person_ids:
+                rel_type = rel.relationship_type.value if hasattr(rel.relationship_type, "value") else str(rel.relationship_type)
+                records["relationships"].append({
+                    "id": rel.id,
+                    "source_person_id": rel.source_person_id,
+                    "target_person_id": rel.target_person_id,
+                    "relationship_type": rel_type,
+                })
+
+        for ev in self.canonical.list_events():
+            if ev.family_context_id == family_context_id and self.auth.can_view_event(account_id, ev, context):
+                ev_status = ev.status.value if hasattr(ev.status, "value") else str(ev.status)
+                ev_vis = ev.visibility.value if hasattr(ev.visibility, "value") else str(ev.visibility)
+                records["events"].append({
+                    "id": ev.id,
+                    "title": ev.title,
+                    "description": ev.description,
+                    "owner_id": ev.owner_id,
+                    "family_context_id": ev.family_context_id,
+                    "place_id": ev.place_id,
+                    "start_time": ev.start_time.isoformat() if ev.start_time else None,
+                    "end_time": ev.end_time.isoformat() if ev.end_time else None,
+                    "status": ev_status,
+                    "visibility": ev_vis,
+                })
+
+        for mem in self.canonical.list_memories():
+            if self.auth.can_view_memory(account_id, mem, context):
+                in_context = False
+                if mem.event_id and any(e["id"] == mem.event_id for e in records["events"]):
+                    in_context = True
+                elif mem.subject_id in context.member_ids:
+                    in_context = True
+
+                if in_context:
+                    mem_vis = mem.visibility.value if hasattr(mem.visibility, "value") else str(mem.visibility)
+                    records["memories"].append({
+                        "id": mem.id,
+                        "event_id": mem.event_id,
+                        "subject_id": mem.subject_id,
+                        "narrative": mem.narrative,
+                        "recorded_at": mem.recorded_at.isoformat() if mem.recorded_at else None,
+                        "visibility": mem_vis,
+                    })
+
+        for plc in self.canonical.list_places():
+            if plc.family_context_id == family_context_id and self.auth.can_view_place(account_id, plc, context):
+                plc_vis = plc.visibility.value if hasattr(plc.visibility, "value") else str(plc.visibility)
+                records["places"].append({
+                    "id": plc.id,
+                    "name": plc.name,
+                    "address": plc.address,
+                    "family_context_id": plc.family_context_id,
+                    "visibility": plc_vis,
+                })
+
+        for item in self.canonical.list_media_items():
+            if item.family_context_id == family_context_id and self.auth.can_view_media_item(account_id, item, context):
+                m_type = item.media_type.value if hasattr(item.media_type, "value") else str(item.media_type)
+                m_vis = item.visibility.value if hasattr(item.visibility, "value") else str(item.visibility)
+                records["media_items"].append({
+                    "id": item.id,
+                    "uri": item.uri,
+                    "media_type": m_type,
+                    "caption": item.caption,
+                    "owner_id": item.owner_id,
+                    "family_context_id": item.family_context_id,
+                    "event_id": item.event_id,
+                    "memory_id": item.memory_id,
+                    "visibility": m_vis,
+                })
+
+        for album in self.canonical.list_media_albums():
+            if album.family_context_id == family_context_id and self.auth.can_view_media_album(account_id, album, context):
+                al_vis = album.visibility.value if hasattr(album.visibility, "value") else str(album.visibility)
+                records["media_albums"].append({
+                    "id": album.id,
+                    "title": album.title,
+                    "description": album.description,
+                    "owner_id": album.owner_id,
+                    "family_context_id": album.family_context_id,
+                    "media_ids": list(album.media_ids),
+                    "visibility": al_vis,
+                })
+
+        for notif in self.canonical.list_notifications():
+            if notif.recipient_id == account_id and notif.family_context_id == family_context_id:
+                n_type = notif.notification_type.value if hasattr(notif.notification_type, "value") else str(notif.notification_type)
+                n_status = notif.status.value if hasattr(notif.status, "value") else str(notif.status)
+                records["notifications"].append({
+                    "id": notif.id,
+                    "recipient_id": notif.recipient_id,
+                    "sender_id": notif.sender_id,
+                    "notification_type": n_type,
+                    "title": notif.title,
+                    "message": notif.message,
+                    "status": n_status,
+                })
+
+        for link in self.canonical.list_share_links():
+            if link.family_context_id == family_context_id and link.created_by_id == account_id:
+                res_type = link.resource_type.value if hasattr(link.resource_type, "value") else str(link.resource_type)
+                records["share_links"].append({
+                    "id": link.id,
+                    "token": link.token,
+                    "resource_type": res_type,
+                    "resource_id": link.resource_id,
+                    "is_revoked": link.is_revoked,
+                })
+
+
+        return DataExportResult(
+            family_context_id=family_context_id,
+            provenance=provenance,
+            records=records,
+        )
+
+    def validate_data_export(self, payload: Dict[str, Any]) -> ExportValidationResult:
+        errors: List[str] = []
+        warnings: List[str] = []
+        counts: Dict[str, int] = {}
+
+        if not isinstance(payload, dict):
+            return ExportValidationResult(is_valid=False, errors=["Payload must be a JSON object"])
+
+        if payload.get("schema_version") != "1.0":
+            errors.append(f"Unsupported or missing schema_version: {payload.get('schema_version')}")
+
+        if not payload.get("export_id"):
+            errors.append("Missing required export_id")
+
+        if not payload.get("family_context_id"):
+            errors.append("Missing required family_context_id")
+
+        provenance_data = payload.get("provenance")
+        if not provenance_data or not isinstance(provenance_data, dict):
+            errors.append("Missing or invalid provenance metadata")
+
+        records = payload.get("records")
+        if not isinstance(records, dict):
+            errors.append("Missing or invalid records dictionary")
+        else:
+            for category, items in records.items():
+                if not isinstance(items, list):
+                    errors.append(f"Record category '{category}' must be a list")
+                else:
+                    counts[category] = len(items)
+                    for item in items:
+                        if not isinstance(item, dict) or "id" not in item:
+                            errors.append(f"Malformed record in category '{category}': missing 'id'")
+
+        is_valid = len(errors) == 0
+        return ExportValidationResult(
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings,
+            record_counts=counts,
+        )
+
 
 
 

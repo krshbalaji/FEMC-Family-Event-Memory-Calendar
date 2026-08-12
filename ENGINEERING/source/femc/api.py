@@ -6,9 +6,11 @@ from typing import List, Optional
 from .models import (
     Confidence,
     ContextDiscoveryResult,
+    DataExportResult,
     Event,
     EventStatus,
     EventWithMemories,
+    ExportValidationResult,
     FamilyTopologyResult,
     MediaAlbum,
     MediaItem,
@@ -32,6 +34,7 @@ from .repositories import CanonicalRepository, DerivedRepository
 from .services import (
     AuthorizationService,
     CalendarService,
+    DataPortabilityService,
     EventService,
     IdentityService,
     MediaService,
@@ -58,7 +61,9 @@ class FEMCApi:
         self.timeline = TimelineService(self.canonical, self.derived, self.authorization)
         self.notification = NotificationService(self.canonical, self.authorization)
         self.sharing = SharingService(self.canonical, self.authorization)
+        self.data_portability = DataPortabilityService(self.canonical, self.derived, self.authorization)
         self.search = SearchService(self.derived)
+
 
 
 
@@ -382,6 +387,16 @@ class FEMCApi:
     def revoke_share_link_for_session(self, session_id: str, token: str) -> ShareLink:
         session = self._validate_session(session_id)
         return self.sharing.revoke_share_link(token, session.account_id)
+
+    def export_family_context_for_session(self, session_id: str, family_context_id: str) -> DataExportResult:
+        session = self._validate_session(session_id)
+        return self.data_portability.export_family_context_for_account(
+            account_id=session.account_id, family_context_id=family_context_id
+        )
+
+    def validate_data_export(self, payload: dict) -> ExportValidationResult:
+        return self.data_portability.validate_data_export(payload)
+
 
 
 
