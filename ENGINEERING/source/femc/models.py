@@ -58,6 +58,33 @@ class ShareResourceType(str, enum.Enum):
     MEDIA_ALBUM = "media_album"
 
 
+class RecurrenceFrequency(str, enum.Enum):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    YEARLY = "yearly"
+
+
+class ReminderType(str, enum.Enum):
+    EVENT_START = "event_start"
+    EVENT_PREPARATION = "event_preparation"
+    CUSTOM = "custom"
+
+
+class ReminderStatus(str, enum.Enum):
+    PENDING = "pending"
+    TRIGGERED = "triggered"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class RecurrenceRule:
+    frequency: RecurrenceFrequency = RecurrenceFrequency.DAILY
+    interval: int = 1
+    until_date: Optional[datetime.date] = None
+
+
+
 class ProposalStatus(str, enum.Enum):
     PROPOSED = "proposed"
     APPROVED = "approved"
@@ -70,6 +97,21 @@ class ProposalType(str, enum.Enum):
     MEMORY_ENHANCEMENT = "memory_enhancement"
     RELATIONSHIP_SUGGESTION = "relationship_suggestion"
     CALENDAR_OPTIMIZATION = "calendar_optimization"
+
+
+class AnomalySeverity(str, enum.Enum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+class AnomalyType(str, enum.Enum):
+    DANGLING_REFERENCE = "dangling_reference"
+    PROJECTION_DESYNC = "projection_desync"
+    PROVENANCE_MISSING = "provenance_missing"
+    PRIVACY_INVARIANT_VIOLATION = "privacy_invariant_violation"
+    TOPOLOGY_INCONSISTENCY = "topology_inconsistency"
+
 
 
 
@@ -182,8 +224,24 @@ class Event:
     status: EventStatus = EventStatus.PLANNED
     visibility: VisibilityLevel = VisibilityLevel.FAMILY
     consent: Optional[Consent] = None
+    recurrence_rule: Optional[RecurrenceRule] = None
     provenance: Optional[ProvenanceMetadata] = None
     created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class ReminderConfig:
+    id: str = field(default_factory=_new_id)
+    event_id: str = ""
+    family_context_id: Optional[str] = None
+    offset_minutes: int = 15
+    reminder_type: ReminderType = ReminderType.EVENT_START
+    status: ReminderStatus = ReminderStatus.PENDING
+    last_triggered_at: Optional[datetime.datetime] = None
+    created_by_id: str = ""
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
 
 
 
@@ -358,6 +416,48 @@ class InsightAnalysis:
     confidence: Confidence = Confidence.MEDIUM
     provenance: Optional[ProvenanceMetadata] = None
     created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+class RepairClassification(str, enum.Enum):
+    DERIVED_ONLY = "DERIVED_ONLY"
+    CANONICAL_REPAIR = "CANONICAL_REPAIR"
+
+
+@dataclass
+class RepairProposal:
+    id: str = field(default_factory=_new_id)
+    anomaly_id: str = ""
+    proposed_repair_action: str = ""
+    target_entity_type: str = ""
+    target_entity_id: str = ""
+    family_context_id: str = ""
+    classification: RepairClassification = RepairClassification.DERIVED_ONLY
+    requires_human_approval: bool = False
+    is_executed: bool = False
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+
+@dataclass
+class AuditAnomaly:
+    id: str = field(default_factory=_new_id)
+    anomaly_type: AnomalyType = AnomalyType.DANGLING_REFERENCE
+    severity: AnomalySeverity = AnomalySeverity.WARNING
+    description: str = ""
+    affected_entity_id: str = ""
+    family_context_id: str = ""
+    repair_proposal: Optional[RepairProposal] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class ValidationReport:
+    is_valid: bool = True
+    checked_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    total_entities_inspected: int = 0
+    anomalies: List[AuditAnomaly] = field(default_factory=list)
+
 
 
 

@@ -6,6 +6,9 @@ from typing import List, Optional
 from .models import (
     Account,
     ActionProposal,
+    AnomalySeverity,
+    AnomalyType,
+    AuditAnomaly,
     AuthenticatedSession,
     CalendarProjectionEntry,
     Confidence,
@@ -31,11 +34,21 @@ from .models import (
     ProvenanceSourceType,
     Relationship,
     RelationshipType,
+    RecurrenceFrequency,
+    RecurrenceRule,
+    ReminderConfig,
+    ReminderStatus,
+    ReminderType,
+    RepairClassification,
+    RepairProposal,
+
+
     SearchResultEntry,
     ShareLink,
     ShareResourceType,
     TimelineItemType,
     TimelineProjectionEntry,
+    ValidationReport,
     VisibilityLevel,
 )
 
@@ -238,6 +251,72 @@ class IdentityService:
 
 
 
+def get_event_occurrences(event: Event, start_date: datetime.date, end_date: datetime.date) -> List[datetime.date]:
+    base_date = event.start_time.date()
+    if event.recurrence_rule is None:
+        if start_date <= base_date <= end_date:
+            return [base_date]
+        return []
+
+    rule = event.recurrence_rule
+    freq = rule.frequency
+    interval = max(1, rule.interval)
+    until = rule.until_date
+
+    occurrences: List[datetime.date] = []
+    target_day = base_date.day
+    target_month = base_date.month
+
+    count = 0
+    if base_date < start_date:
+        if freq == RecurrenceFrequency.DAILY:
+            steps = (start_date - base_date).days // interval
+            count = max(0, steps)
+        elif freq == RecurrenceFrequency.WEEKLY:
+            steps = (start_date - base_date).days // (7 * interval)
+            count = max(0, steps)
+        elif freq == RecurrenceFrequency.MONTHLY:
+            m_diff = (start_date.year - base_date.year) * 12 + (start_date.month - base_date.month)
+            steps = m_diff // interval
+            count = max(0, steps)
+        elif freq == RecurrenceFrequency.YEARLY:
+            y_diff = start_date.year - base_date.year
+            steps = y_diff // interval
+            count = max(0, steps)
+
+    import calendar
+
+    while count < 500:
+        if freq == RecurrenceFrequency.DAILY:
+            curr = base_date + datetime.timedelta(days=count * interval)
+        elif freq == RecurrenceFrequency.WEEKLY:
+            curr = base_date + datetime.timedelta(days=count * 7 * interval)
+        elif freq == RecurrenceFrequency.MONTHLY:
+            total_months = (base_date.year * 12 + base_date.month - 1) + count * interval
+            new_year = total_months // 12
+            new_month = (total_months % 12) + 1
+            max_days = calendar.monthrange(new_year, new_month)[1]
+            new_day = min(target_day, max_days)
+            curr = datetime.date(new_year, new_month, new_day)
+        elif freq == RecurrenceFrequency.YEARLY:
+            new_year = base_date.year + count * interval
+            max_days = calendar.monthrange(new_year, target_month)[1]
+            new_day = min(target_day, max_days)
+            curr = datetime.date(new_year, target_month, new_day)
+
+        if until and curr > until:
+            break
+        if curr > end_date:
+            break
+        if curr >= start_date:
+            occurrences.append(curr)
+
+        count += 1
+
+    return occurrences
+
+
+
 class EventService:
     def __init__(self, canonical: CanonicalRepository, derived: DerivedRepository, auth: AuthorizationService) -> None:
         self.canonical = canonical
@@ -254,6 +333,7 @@ class EventService:
         end_time: Optional[datetime.datetime],
         visibility: VisibilityLevel = VisibilityLevel.FAMILY,
         place_id: Optional[str] = None,
+        recurrence_rule: Optional[RecurrenceRule] = None,
     ) -> Event:
         context = self.canonical.get_family_context(family_context_id) if family_context_id else None
         if not self.auth.can_create_event(owner_id, context):
@@ -279,11 +359,13 @@ class EventService:
             start_time=start_time,
             end_time=end_time,
             visibility=visibility,
+            recurrence_rule=recurrence_rule,
             provenance=provenance,
         )
         saved = self.canonical.add_event(event)
         self._project_event(saved, context)
         return saved
+
 
 
     def _project_event(self, event: Event, context: Optional[FamilyContext]) -> None:
@@ -345,6 +427,30 @@ class CalendarService:
         self.derived = derived
         self.auth = auth
 
+    def rebuild_calendar_projection(self, family_context_id: str) -> List[CalendarProjectionEntry]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            return []
+
+        self.derived.calendar_entries = [c for c in self.derived.calendar_entries if c.family_context_id != family_context_id]
+
+        rebuilt = []
+        for ev in self.canonical.list_events():
+            if ev.family_context_id == family_context_id:
+                entry = CalendarProjectionEntry(
+                    event_id=ev.id,
+                    title=ev.title,
+                    date=ev.start_time.date(),
+                    status=ev.status,
+                    visibility=ev.visibility,
+                    family_context_id=ev.family_context_id,
+                )
+                self.derived.add_calendar_entry(entry)
+                rebuilt.append(entry)
+        return rebuilt
+
+
+
     def get_calendar_for_context(
         self,
         account_id: str,
@@ -355,12 +461,30 @@ class CalendarService:
         context = self.canonical.get_family_context(family_context_id)
         if context is None:
             return []
-        entries = self.derived.get_calendar_entries(
-            family_context_id=family_context_id,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        return [entry for entry in entries if self._can_view_projection(account_id, entry, context)]
+
+        s_date = start_date if start_date is not None else datetime.date(1970, 1, 1)
+        e_date = end_date if end_date is not None else datetime.date(2099, 12, 31)
+
+        result_entries: List[CalendarProjectionEntry] = []
+
+        for ev in self.canonical.list_events():
+            if ev.family_context_id == family_context_id:
+                occs = get_event_occurrences(ev, s_date, e_date)
+                for occ in occs:
+                    entry = CalendarProjectionEntry(
+                        event_id=ev.id,
+                        title=ev.title,
+                        date=occ,
+                        status=ev.status,
+                        visibility=ev.visibility,
+                        family_context_id=ev.family_context_id,
+                    )
+                    if self._can_view_projection(account_id, entry, context):
+                        result_entries.append(entry)
+
+        result_entries.sort(key=lambda x: x.date)
+        return result_entries
+
 
 
     def _can_view_projection(self, account_id: str, entry: CalendarProjectionEntry, context: FamilyContext) -> bool:
@@ -841,6 +965,108 @@ class NotificationService:
         return notification
 
 
+class ReminderService:
+    def __init__(self, canonical: CanonicalRepository, auth: AuthorizationService, notification_service: NotificationService) -> None:
+        self.canonical = canonical
+        self.auth = auth
+        self.notification_service = notification_service
+
+    def create_reminder(
+        self,
+        created_by_id: str,
+        event_id: str,
+        offset_minutes: int = 15,
+        reminder_type: ReminderType = ReminderType.EVENT_START,
+    ) -> ReminderConfig:
+        event = self.canonical.get_event(event_id)
+        if event is None:
+            raise ValueError("Referenced event does not exist")
+
+        context = self.canonical.get_family_context(event.family_context_id) if event.family_context_id else None
+        if not self.auth.can_view_event(created_by_id, event, context):
+            raise PermissionError("Account is not authorized to create reminders for this event")
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.USER,
+            source_id=created_by_id,
+            created_by_id=created_by_id,
+            audit_trail=["reminder-created"],
+        )
+
+        reminder = ReminderConfig(
+            event_id=event_id,
+            family_context_id=event.family_context_id,
+            offset_minutes=offset_minutes,
+            reminder_type=reminder_type,
+            status=ReminderStatus.PENDING,
+            created_by_id=created_by_id,
+            provenance=provenance,
+        )
+        return self.canonical.add_reminder(reminder)
+
+    def list_reminders_for_event(self, account_id: str, event_id: str) -> List[ReminderConfig]:
+        event = self.canonical.get_event(event_id)
+        if event is None:
+            raise ValueError("Referenced event does not exist")
+
+        context = self.canonical.get_family_context(event.family_context_id) if event.family_context_id else None
+        if not self.auth.can_view_event(account_id, event, context):
+            raise PermissionError("Account is not authorized to view reminders for this event")
+
+        return [r for r in self.canonical.list_reminders() if r.event_id == event_id]
+
+    def evaluate_due_reminders(
+        self,
+        account_id: str,
+        family_context_id: str,
+        current_time: Optional[datetime.datetime] = None,
+    ) -> List[Notification]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        if current_time is None:
+            current_time = datetime.datetime.utcnow()
+
+        triggered_notifications: List[Notification] = []
+
+        for reminder in self.canonical.list_reminders():
+            if reminder.family_context_id == family_context_id and reminder.status == ReminderStatus.PENDING:
+                event = self.canonical.get_event(reminder.event_id)
+                if event is None:
+                    continue
+
+                if not self.auth.can_view_event(reminder.created_by_id, event, context):
+                    continue
+
+                trigger_time = event.start_time - datetime.timedelta(minutes=reminder.offset_minutes)
+
+                if current_time >= trigger_time:
+                    try:
+                        notif = self.notification_service.create_notification(
+                            sender_id="system-reminder-service",
+                            recipient_id=reminder.created_by_id,
+                            notification_type=NotificationType.SYSTEM_ALERT,
+                            title=f"Reminder: {event.title}",
+                            message=f"Event '{event.title}' is starting soon (in {reminder.offset_minutes} minutes).",
+                            family_context_id=family_context_id,
+                            target_resource_id=event.id,
+                        )
+                        reminder.status = ReminderStatus.TRIGGERED
+                        reminder.last_triggered_at = current_time
+                        if reminder.provenance and reminder.provenance.audit_trail is not None:
+                            reminder.provenance.audit_trail.append(f"reminder-triggered-at:{current_time.isoformat()}")
+                        triggered_notifications.append(notif)
+                    except Exception:
+                        pass
+
+
+        return triggered_notifications
+
+
+
 class SharingService:
     def __init__(self, canonical: CanonicalRepository, auth: AuthorizationService) -> None:
         self.canonical = canonical
@@ -1004,8 +1230,10 @@ class DataPortabilityService:
             "media_items": [],
             "media_albums": [],
             "notifications": [],
+            "reminders": [],
             "share_links": [],
             "action_proposals": [],
+            "repair_proposals": [],
             "insight_analyses": [],
         }
 
@@ -1052,6 +1280,14 @@ class DataPortabilityService:
             if ev.family_context_id == family_context_id and self.auth.can_view_event(account_id, ev, context):
                 ev_status = ev.status.value if hasattr(ev.status, "value") else str(ev.status)
                 ev_vis = ev.visibility.value if hasattr(ev.visibility, "value") else str(ev.visibility)
+                rec_dict = None
+                if ev.recurrence_rule:
+                    r_freq = ev.recurrence_rule.frequency.value if hasattr(ev.recurrence_rule.frequency, "value") else str(ev.recurrence_rule.frequency)
+                    rec_dict = {
+                        "frequency": r_freq,
+                        "interval": ev.recurrence_rule.interval,
+                        "until_date": ev.recurrence_rule.until_date.isoformat() if ev.recurrence_rule.until_date else None,
+                    }
                 records["events"].append({
                     "id": ev.id,
                     "title": ev.title,
@@ -1063,6 +1299,7 @@ class DataPortabilityService:
                     "end_time": ev.end_time.isoformat() if ev.end_time else None,
                     "status": ev_status,
                     "visibility": ev_vis,
+                    "recurrence_rule": rec_dict,
                 })
 
         for mem in self.canonical.list_memories():
@@ -1138,6 +1375,21 @@ class DataPortabilityService:
                     "status": n_status,
                 })
 
+        for reminder in self.canonical.list_reminders():
+            if reminder.family_context_id == family_context_id and reminder.created_by_id == account_id:
+                r_type = reminder.reminder_type.value if hasattr(reminder.reminder_type, "value") else str(reminder.reminder_type)
+                r_status = reminder.status.value if hasattr(reminder.status, "value") else str(reminder.status)
+                records["reminders"].append({
+                    "id": reminder.id,
+                    "event_id": reminder.event_id,
+                    "family_context_id": reminder.family_context_id,
+                    "offset_minutes": reminder.offset_minutes,
+                    "reminder_type": r_type,
+                    "status": r_status,
+                    "last_triggered_at": reminder.last_triggered_at.isoformat() if reminder.last_triggered_at else None,
+                })
+
+
         for link in self.canonical.list_share_links():
             if link.family_context_id == family_context_id and link.created_by_id == account_id:
                 res_type = link.resource_type.value if hasattr(link.resource_type, "value") else str(link.resource_type)
@@ -1170,11 +1422,28 @@ class DataPortabilityService:
                     "analysis_summary": insight.analysis_summary,
                 })
 
+        records["repair_proposals"] = []
+        for r_prop in self.canonical.list_repair_proposals():
+            if r_prop.family_context_id == family_context_id:
+                c_val = r_prop.classification.value if hasattr(r_prop.classification, "value") else str(r_prop.classification)
+                records["repair_proposals"].append({
+                    "id": r_prop.id,
+                    "anomaly_id": r_prop.anomaly_id,
+                    "proposed_repair_action": r_prop.proposed_repair_action,
+                    "target_entity_type": r_prop.target_entity_type,
+                    "target_entity_id": r_prop.target_entity_id,
+                    "classification": c_val,
+                    "requires_human_approval": r_prop.requires_human_approval,
+                    "is_executed": r_prop.is_executed,
+                })
+
         return DataExportResult(
             family_context_id=family_context_id,
             provenance=provenance,
             records=records,
         )
+
+
 
 
     def validate_data_export(self, payload: Dict[str, Any]) -> ExportValidationResult:
@@ -1389,6 +1658,409 @@ class MayilService:
             proposal.provenance.audit_trail.append(f"rejected-from-mayil-proposal:{proposal.id}")
 
         return proposal
+
+
+class VelGuardianService:
+    def __init__(
+        self,
+        canonical: CanonicalRepository,
+        derived: DerivedRepository,
+        auth: AuthorizationService,
+        calendar_service: CalendarService,
+        timeline_service: TimelineService,
+    ) -> None:
+        self.canonical = canonical
+        self.derived = derived
+        self.auth = auth
+        self.calendar_service = calendar_service
+        self.timeline_service = timeline_service
+
+    def run_integrity_audit(self, account_id: str, family_context_id: str) -> ValidationReport:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        anomalies: List[AuditAnomaly] = []
+        inspected_count = 0
+
+        # Gather context canonical entities
+        context_events = [e for e in self.canonical.list_events() if e.family_context_id == family_context_id]
+        context_places = [p for p in self.canonical.list_places() if p.family_context_id == family_context_id]
+        context_memories = [m for m in self.canonical.list_memories() if self._memory_in_context(m, family_context_id, context.member_ids)]
+        context_media_items = [m for m in self.canonical.list_media_items() if m.family_context_id == family_context_id]
+        context_media_albums = [a for a in self.canonical.list_media_albums() if a.family_context_id == family_context_id]
+        context_notifications = [n for n in self.canonical.list_notifications() if n.family_context_id == family_context_id]
+        context_share_links = [s for s in self.canonical.list_share_links() if s.family_context_id == family_context_id]
+        context_proposals = [p for p in self.canonical.list_action_proposals() if p.family_context_id == family_context_id]
+        relationships = self.canonical.list_relationships()
+
+        all_place_ids = {p.id for p in self.canonical.list_places()}
+        all_event_ids = {e.id for e in self.canonical.list_events()}
+        all_memory_ids = {m.id for m in self.canonical.list_memories()}
+        all_media_item_ids = {m.id for m in self.canonical.list_media_items()}
+        all_account_ids = {a.id for a in self.canonical.list_accounts()}
+        all_person_ids = {p.id for p in self.canonical.list_persons()}
+
+        inspected_count += (
+            len(context_events)
+            + len(context_places)
+            + len(context_memories)
+            + len(context_media_items)
+            + len(context_media_albums)
+            + len(context_notifications)
+            + len(context_share_links)
+            + len(context_proposals)
+            + len(relationships)
+        )
+
+        # 1. Reference Relationship Integrity Checks
+        for member_id in context.member_ids:
+            if member_id not in all_account_ids:
+                prop = self._create_repair_proposal("dangling_member_account", "FamilyContext", context.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.CRITICAL,
+                    description=f"FamilyContext '{context.id}' references non-existent member account '{member_id}'",
+                    affected_entity_id=context.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+        for ev in context_events:
+            if ev.place_id and ev.place_id not in all_place_ids:
+                prop = self._create_repair_proposal("dangling_place_id", "Event", ev.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"Event '{ev.title}' references non-existent place_id '{ev.place_id}'",
+                    affected_entity_id=ev.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+        for mem in context_memories:
+            if mem.event_id and mem.event_id not in all_event_ids:
+                prop = self._create_repair_proposal("dangling_event_id", "Memory", mem.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"Memory '{mem.id}' references non-existent event_id '{mem.event_id}'",
+                    affected_entity_id=mem.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+        for item in context_media_items:
+            if item.event_id and item.event_id not in all_event_ids:
+                prop = self._create_repair_proposal("dangling_event_id", "MediaItem", item.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"MediaItem '{item.id}' references non-existent event_id '{item.event_id}'",
+                    affected_entity_id=item.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+            if item.memory_id and item.memory_id not in all_memory_ids:
+                prop = self._create_repair_proposal("dangling_memory_id", "MediaItem", item.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"MediaItem '{item.id}' references non-existent memory_id '{item.memory_id}'",
+                    affected_entity_id=item.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+        for album in context_media_albums:
+            for mid in album.media_ids:
+                if mid not in all_media_item_ids:
+                    prop = self._create_repair_proposal("dangling_media_id_in_album", "MediaAlbum", album.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                    anomalies.append(AuditAnomaly(
+                        anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                        severity=AnomalySeverity.WARNING,
+                        description=f"MediaAlbum '{album.title}' references non-existent media_id '{mid}'",
+                        affected_entity_id=album.id,
+                        family_context_id=family_context_id,
+                        repair_proposal=prop,
+                    ))
+
+        for notif in context_notifications:
+            if notif.target_resource_id:
+                if not self._target_resource_exists(notif.target_resource_id):
+                    prop = self._create_repair_proposal("dangling_notification_resource", "Notification", notif.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                    anomalies.append(AuditAnomaly(
+                        anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                        severity=AnomalySeverity.WARNING,
+                        description=f"Notification '{notif.id}' references non-existent target resource '{notif.target_resource_id}'",
+                        affected_entity_id=notif.id,
+                        family_context_id=family_context_id,
+                        repair_proposal=prop,
+                    ))
+
+        for link in context_share_links:
+            if not self._target_resource_exists(link.resource_id):
+                prop = self._create_repair_proposal("dangling_share_link_resource", "ShareLink", link.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.CRITICAL,
+                    description=f"ShareLink '{link.token}' references non-existent target resource '{link.resource_id}'",
+                    affected_entity_id=link.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+        # 2. Topology Consistency Checks
+        context_person_ids = {acc.person_id for acc in [self.canonical.get_account(m) for m in context.member_ids] if acc}
+        for rel in relationships:
+            if rel.source_person_id in context_person_ids or rel.target_person_id in context_person_ids:
+                if rel.source_person_id == rel.target_person_id:
+                    prop = self._create_repair_proposal("fix_self_relationship", "Relationship", rel.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                    anomalies.append(AuditAnomaly(
+                        anomaly_type=AnomalyType.TOPOLOGY_INCONSISTENCY,
+                        severity=AnomalySeverity.WARNING,
+                        description=f"Relationship '{rel.id}' has identical source and target person ID '{rel.source_person_id}'",
+                        affected_entity_id=rel.id,
+                        family_context_id=family_context_id,
+                        repair_proposal=prop,
+                    ))
+                elif rel.source_person_id not in all_person_ids or rel.target_person_id not in all_person_ids:
+                    prop = self._create_repair_proposal("fix_unresolved_relationship", "Relationship", rel.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                    anomalies.append(AuditAnomaly(
+                        anomaly_type=AnomalyType.TOPOLOGY_INCONSISTENCY,
+                        severity=AnomalySeverity.WARNING,
+                        description=f"Relationship '{rel.id}' references non-existent person ID",
+                        affected_entity_id=rel.id,
+                        family_context_id=family_context_id,
+                        repair_proposal=prop,
+                    ))
+
+        # 3. Projection Consistency Checks
+        cal_entries = {c.event_id: c for c in self.derived.get_calendar_entries(family_context_id)}
+        for ev in context_events:
+            if ev.id not in cal_entries:
+                prop = self._create_repair_proposal("rebuild_derived_projections", "CalendarProjection", ev.id, family_context_id, classification=RepairClassification.DERIVED_ONLY)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.PROJECTION_DESYNC,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"Event '{ev.title}' missing from calendar projection",
+                    affected_entity_id=ev.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+            else:
+                c_entry = cal_entries[ev.id]
+                if c_entry.title != ev.title or c_entry.visibility != ev.visibility or c_entry.status != ev.status:
+                    prop = self._create_repair_proposal("rebuild_derived_projections", "CalendarProjection", ev.id, family_context_id, classification=RepairClassification.DERIVED_ONLY)
+                    anomalies.append(AuditAnomaly(
+                        anomaly_type=AnomalyType.PROJECTION_DESYNC,
+                        severity=AnomalySeverity.WARNING,
+                        description=f"Calendar projection entry for event '{ev.id}' desynced from canonical record",
+                        affected_entity_id=ev.id,
+                        family_context_id=family_context_id,
+                        repair_proposal=prop,
+                    ))
+
+        timeline_entries = {t.ref_id: t for t in self.derived.get_timeline_entries(family_context_id)}
+        for ev in context_events:
+            if ev.id not in timeline_entries:
+                prop = self._create_repair_proposal("rebuild_derived_projections", "TimelineProjection", ev.id, family_context_id, classification=RepairClassification.DERIVED_ONLY)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.PROJECTION_DESYNC,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"Event '{ev.title}' missing from timeline projection",
+                    affected_entity_id=ev.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+        # 4. Privacy Invariant Checks
+        for ev in context_events:
+            if ev.visibility == VisibilityLevel.PRIVATE:
+                for link in context_share_links:
+                    if link.resource_id == ev.id and not link.is_revoked:
+                        prop = self._create_repair_proposal("revoke_privacy_violating_share_link", "ShareLink", link.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                        anomalies.append(AuditAnomaly(
+                            anomaly_type=AnomalyType.PRIVACY_INVARIANT_VIOLATION,
+                            severity=AnomalySeverity.CRITICAL,
+                            description=f"Private event '{ev.id}' is exposed via active share link token '{link.token}'",
+                            affected_entity_id=ev.id,
+                            family_context_id=family_context_id,
+                            repair_proposal=prop,
+                        ))
+                if ev.id in cal_entries and cal_entries[ev.id].visibility == VisibilityLevel.PUBLIC:
+                    prop = self._create_repair_proposal("rebuild_derived_projections", "CalendarProjection", ev.id, family_context_id, classification=RepairClassification.DERIVED_ONLY)
+                    anomalies.append(AuditAnomaly(
+                        anomaly_type=AnomalyType.PRIVACY_INVARIANT_VIOLATION,
+                        severity=AnomalySeverity.CRITICAL,
+                        description=f"Private event '{ev.id}' exposed as PUBLIC in calendar projection",
+                        affected_entity_id=ev.id,
+                        family_context_id=family_context_id,
+                        repair_proposal=prop,
+                    ))
+
+        context_reminders = [r for r in self.canonical.list_reminders() if r.family_context_id == family_context_id]
+
+        for reminder in context_reminders:
+            if reminder.event_id not in all_event_ids:
+                prop = self._create_repair_proposal("dangling_event_id_in_reminder", "ReminderConfig", reminder.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"ReminderConfig '{reminder.id}' references non-existent event_id '{reminder.event_id}'",
+                    affected_entity_id=reminder.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+            if reminder.status == ReminderStatus.TRIGGERED and reminder.last_triggered_at is None:
+                prop = self._create_repair_proposal("inconsistent_reminder_trigger_state", "ReminderConfig", reminder.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.TOPOLOGY_INCONSISTENCY,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"ReminderConfig '{reminder.id}' marked TRIGGERED but last_triggered_at is None",
+                    affected_entity_id=reminder.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+        for ev in context_events:
+            if ev.recurrence_rule:
+                rule = ev.recurrence_rule
+                if rule.interval <= 0 or (rule.until_date and rule.until_date < ev.start_time.date()):
+                    prop = self._create_repair_proposal("invalid_recurrence_rule", "Event", ev.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                    anomalies.append(AuditAnomaly(
+                        anomaly_type=AnomalyType.TOPOLOGY_INCONSISTENCY,
+                        severity=AnomalySeverity.CRITICAL,
+                        description=f"Event '{ev.id}' has invalid recurrence rule (interval={rule.interval}, until_date={rule.until_date})",
+                        affected_entity_id=ev.id,
+                        family_context_id=family_context_id,
+                        repair_proposal=prop,
+                    ))
+
+        # 5. Missing Provenance Checks
+        for entity, entity_type in [
+            *[(e, "Event") for e in context_events],
+            *[(m, "Memory") for m in context_memories],
+            *[(p, "Place") for p in context_places],
+            *[(mi, "MediaItem") for mi in context_media_items],
+            *[(ma, "MediaAlbum") for ma in context_media_albums],
+            *[(n, "Notification") for n in context_notifications],
+            *[(sl, "ShareLink") for sl in context_share_links],
+            *[(rem, "ReminderConfig") for rem in context_reminders],
+        ]:
+            if entity.provenance is None:
+                prop = self._create_repair_proposal("add_provenance", entity_type, entity.id, family_context_id, classification=RepairClassification.CANONICAL_REPAIR)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.PROVENANCE_MISSING,
+                    severity=AnomalySeverity.CRITICAL,
+                    description=f"{entity_type} '{entity.id}' missing required provenance metadata",
+                    affected_entity_id=entity.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
+
+        is_valid = len(anomalies) == 0
+        return ValidationReport(
+            is_valid=is_valid,
+            checked_at=datetime.datetime.utcnow(),
+            total_entities_inspected=inspected_count,
+            anomalies=anomalies,
+        )
+
+    def _memory_in_context(self, memory: Memory, family_context_id: str, member_ids: List[str]) -> bool:
+        if memory.event_id:
+            ev = self.canonical.get_event(memory.event_id)
+            if ev and ev.family_context_id == family_context_id:
+                return True
+        return memory.subject_id in member_ids
+
+    def _target_resource_exists(self, resource_id: str) -> bool:
+        return (
+            self.canonical.get_event(resource_id) is not None
+            or self.canonical.get_memory(resource_id) is not None
+            or self.canonical.get_media_item(resource_id) is not None
+            or self.canonical.get_media_album(resource_id) is not None
+            or self.canonical.get_place(resource_id) is not None
+        )
+
+    def _create_repair_proposal(
+        self,
+        action: str,
+        entity_type: str,
+        entity_id: str,
+        family_context_id: str,
+        classification: RepairClassification = RepairClassification.DERIVED_ONLY,
+    ) -> RepairProposal:
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="vel-guardian-engine",
+            created_by_id="vel-guardian",
+            audit_trail=["vel-integrity-audit", "repair-proposed"],
+        )
+        requires_human_approval = (classification == RepairClassification.CANONICAL_REPAIR)
+        prop = RepairProposal(
+            proposed_repair_action=action,
+            target_entity_type=entity_type,
+            target_entity_id=entity_id,
+            family_context_id=family_context_id,
+            classification=classification,
+            requires_human_approval=requires_human_approval,
+            is_executed=False,
+            provenance=provenance,
+        )
+        return self.canonical.add_repair_proposal(prop)
+
+    def get_repair_proposals(self, account_id: str, family_context_id: str) -> List[RepairProposal]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        return [
+            p for p in self.canonical.list_repair_proposals()
+            if p.family_context_id == family_context_id
+        ]
+
+    def execute_repair_proposal(self, account_id: str, proposal_id: str) -> RepairProposal:
+        proposal = self.canonical.get_repair_proposal(proposal_id)
+        if proposal is None:
+            raise ValueError("Repair proposal not found")
+
+        context = self.canonical.get_family_context(proposal.family_context_id)
+        if context is None or account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        if proposal.is_executed:
+            raise ValueError("Repair proposal has already been executed")
+
+        # Canonical repairs MUST NOT execute automatically in current seed baseline
+        if proposal.classification == RepairClassification.CANONICAL_REPAIR:
+            raise NotImplementedError("Canonical entity repairs are deferred in the current seed baseline")
+
+        # Derived projection repairs (explicit, typed operations only)
+        if proposal.classification == RepairClassification.DERIVED_ONLY:
+            if proposal.proposed_repair_action == "rebuild_derived_projections":
+                try:
+                    self.calendar_service.rebuild_calendar_projection(proposal.family_context_id)
+                    self.timeline_service.rebuild_timeline_projection()
+                except Exception as e:
+                    # Atomicity: if rebuild fails, proposal state stays unchanged and is_executed remains False
+                    raise RuntimeError(f"Derived projection rebuild failed: {str(e)}") from e
+            else:
+                raise ValueError(f"Unknown derived repair action: '{proposal.proposed_repair_action}'")
+
+        proposal.is_executed = True
+
+        if proposal.provenance and proposal.provenance.audit_trail is not None:
+            proposal.provenance.audit_trail.append(f"repair-executed-by:{account_id}")
+
+        return proposal
+
+
 
 
 

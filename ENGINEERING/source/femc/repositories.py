@@ -20,10 +20,13 @@ from .models import (
     Place,
     ProvenanceMetadata,
     Relationship,
+    ReminderConfig,
+    RepairProposal,
     SearchResultEntry,
     ShareLink,
     TimelineProjectionEntry,
 )
+
 
 
 
@@ -44,6 +47,20 @@ class CanonicalRepository:
         self.share_links: Dict[str, ShareLink] = {}
         self.action_proposals: Dict[str, ActionProposal] = {}
         self.insight_analyses: Dict[str, InsightAnalysis] = {}
+        self.repair_proposals: Dict[str, RepairProposal] = {}
+        self.reminders: Dict[str, ReminderConfig] = {}
+
+    def add_reminder(self, reminder: ReminderConfig) -> ReminderConfig:
+        self.reminders[reminder.id] = reminder
+        return reminder
+
+    def get_reminder(self, reminder_id: str) -> Optional[ReminderConfig]:
+        return self.reminders.get(reminder_id)
+
+    def list_reminders(self) -> List[ReminderConfig]:
+        return list(self.reminders.values())
+
+
 
 
 
@@ -55,12 +72,19 @@ class CanonicalRepository:
     def get_person(self, person_id: str) -> Optional[Person]:
         return self.persons.get(person_id)
 
+    def list_persons(self) -> List[Person]:
+        return list(self.persons.values())
+
     def add_account(self, account: Account) -> Account:
         self.accounts[account.id] = account
         return account
 
     def get_account(self, account_id: str) -> Optional[Account]:
         return self.accounts.get(account_id)
+
+    def list_accounts(self) -> List[Account]:
+        return list(self.accounts.values())
+
 
     def add_session(self, session: AuthenticatedSession) -> AuthenticatedSession:
         self.sessions[session.session_id] = session
@@ -196,6 +220,19 @@ class CanonicalRepository:
 
     def list_insight_analyses(self) -> List[InsightAnalysis]:
         return list(self.insight_analyses.values())
+
+    def add_repair_proposal(self, proposal: RepairProposal) -> RepairProposal:
+        if proposal.provenance is None:
+            raise ValueError("Repair proposal provenance is required")
+        self.repair_proposals[proposal.id] = proposal
+        return proposal
+
+    def get_repair_proposal(self, proposal_id: str) -> Optional[RepairProposal]:
+        return self.repair_proposals.get(proposal_id)
+
+    def list_repair_proposals(self) -> List[RepairProposal]:
+        return list(self.repair_proposals.values())
+
 
 
 

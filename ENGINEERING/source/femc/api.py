@@ -5,6 +5,9 @@ from typing import List, Optional
 
 from .models import (
     ActionProposal,
+    AnomalySeverity,
+    AnomalyType,
+    AuditAnomaly,
     Confidence,
     ContextDiscoveryResult,
     DataExportResult,
@@ -24,12 +27,19 @@ from .models import (
     Place,
     ProposalStatus,
     ProposalType,
+    RecurrenceRule,
     Relationship,
     RelationshipType,
+    ReminderConfig,
+    ReminderStatus,
+    ReminderType,
+    RepairClassification,
+    RepairProposal,
     ShareLink,
     ShareResourceType,
     TimelineItemType,
     TimelineProjectionEntry,
+    ValidationReport,
     VisibilityLevel,
 )
 
@@ -46,9 +56,11 @@ from .services import (
     MemoryService,
     NotificationService,
     PlaceService,
+    ReminderService,
     SearchService,
     SharingService,
     TimelineService,
+    VelGuardianService,
 )
 
 
@@ -65,10 +77,14 @@ class FEMCApi:
         self.media = MediaService(self.canonical, self.derived, self.authorization)
         self.timeline = TimelineService(self.canonical, self.derived, self.authorization)
         self.notification = NotificationService(self.canonical, self.authorization)
+        self.reminder = ReminderService(self.canonical, self.authorization, self.notification)
         self.sharing = SharingService(self.canonical, self.authorization)
         self.data_portability = DataPortabilityService(self.canonical, self.derived, self.authorization)
         self.mayil = MayilService(self.canonical, self.derived, self.authorization, self.event)
+        self.guardian = VelGuardianService(self.canonical, self.derived, self.authorization, self.calendar, self.timeline)
         self.search = SearchService(self.derived)
+
+
 
 
 
@@ -101,6 +117,7 @@ class FEMCApi:
         end_time: Optional[datetime.datetime],
         visibility: VisibilityLevel = VisibilityLevel.FAMILY,
         place_id: Optional[str] = None,
+        recurrence_rule: Optional[RecurrenceRule] = None,
     ) -> Event:
         session = self._validate_session(session_id)
         return self.event.create_event(
@@ -112,7 +129,41 @@ class FEMCApi:
             end_time=end_time,
             visibility=visibility,
             place_id=place_id,
+            recurrence_rule=recurrence_rule,
         )
+
+    def configure_reminder_for_session(
+        self,
+        session_id: str,
+        event_id: str,
+        offset_minutes: int = 15,
+        reminder_type: ReminderType = ReminderType.EVENT_START,
+    ) -> ReminderConfig:
+        session = self._validate_session(session_id)
+        return self.reminder.create_reminder(
+            created_by_id=session.account_id,
+            event_id=event_id,
+            offset_minutes=offset_minutes,
+            reminder_type=reminder_type,
+        )
+
+    def list_reminders_for_event_for_session(self, session_id: str, event_id: str) -> List[ReminderConfig]:
+        session = self._validate_session(session_id)
+        return self.reminder.list_reminders_for_event(session.account_id, event_id)
+
+    def trigger_due_reminders_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        current_time: Optional[datetime.datetime] = None,
+    ) -> List[Notification]:
+        session = self._validate_session(session_id)
+        return self.reminder.evaluate_due_reminders(
+            account_id=session.account_id,
+            family_context_id=family_context_id,
+            current_time=current_time,
+        )
+
 
 
     def get_event_for_session(self, session_id: str, event_id: str) -> Event:
@@ -436,6 +487,19 @@ class FEMCApi:
     def reject_action_proposal_for_session(self, session_id: str, proposal_id: str) -> ActionProposal:
         session = self._validate_session(session_id)
         return self.mayil.reject_action_proposal(session.account_id, proposal_id)
+
+    def run_integrity_audit_for_session(self, session_id: str, family_context_id: str) -> ValidationReport:
+        session = self._validate_session(session_id)
+        return self.guardian.run_integrity_audit(session.account_id, family_context_id)
+
+    def get_repair_proposals_for_session(self, session_id: str, family_context_id: str) -> List[RepairProposal]:
+        session = self._validate_session(session_id)
+        return self.guardian.get_repair_proposals(session.account_id, family_context_id)
+
+    def execute_repair_proposal_for_session(self, session_id: str, proposal_id: str) -> RepairProposal:
+        session = self._validate_session(session_id)
+        return self.guardian.execute_repair_proposal(session.account_id, proposal_id)
+
 
 
 
