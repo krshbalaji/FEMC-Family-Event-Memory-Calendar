@@ -10,9 +10,20 @@ from .models import (
     EventStatus,
     EventWithMemories,
     FamilyTopologyResult,
+    MediaAlbum,
+    MediaItem,
+    MediaType,
     Memory,
+    Notification,
+    NotificationStatus,
+    NotificationType,
+    Place,
     Relationship,
     RelationshipType,
+    ShareLink,
+    ShareResourceType,
+    TimelineItemType,
+    TimelineProjectionEntry,
     VisibilityLevel,
 )
 
@@ -23,8 +34,13 @@ from .services import (
     CalendarService,
     EventService,
     IdentityService,
+    MediaService,
     MemoryService,
+    NotificationService,
+    PlaceService,
     SearchService,
+    SharingService,
+    TimelineService,
 )
 
 
@@ -37,7 +53,16 @@ class FEMCApi:
         self.event = EventService(self.canonical, self.derived, self.authorization)
         self.calendar = CalendarService(self.canonical, self.derived, self.authorization)
         self.memory = MemoryService(self.canonical, self.derived, self.authorization)
+        self.place = PlaceService(self.canonical, self.derived, self.authorization)
+        self.media = MediaService(self.canonical, self.derived, self.authorization)
+        self.timeline = TimelineService(self.canonical, self.derived, self.authorization)
+        self.notification = NotificationService(self.canonical, self.authorization)
+        self.sharing = SharingService(self.canonical, self.authorization)
         self.search = SearchService(self.derived)
+
+
+
+
 
     def create_session(self, account_id: str, duration_minutes: int = 60):
         return self.identity.create_session(account_id, duration_minutes=duration_minutes)
@@ -63,6 +88,7 @@ class FEMCApi:
         start_time: datetime.datetime,
         end_time: Optional[datetime.datetime],
         visibility: VisibilityLevel = VisibilityLevel.FAMILY,
+        place_id: Optional[str] = None,
     ) -> Event:
         session = self._validate_session(session_id)
         return self.event.create_event(
@@ -73,7 +99,9 @@ class FEMCApi:
             start_time=start_time,
             end_time=end_time,
             visibility=visibility,
+            place_id=place_id,
         )
+
 
     def get_event_for_session(self, session_id: str, event_id: str) -> Event:
         session = self._validate_session(session_id)
@@ -190,4 +218,172 @@ class FEMCApi:
     def get_family_topology_for_session(self, session_id: str, family_context_id: str) -> FamilyTopologyResult:
         session = self._validate_session(session_id)
         return self.identity.get_family_topology_for_account(family_context_id, session.account_id)
+
+    def create_place_for_session(
+        self,
+        session_id: str,
+        name: str,
+        address: str = "",
+        family_context_id: Optional[str] = None,
+        visibility: VisibilityLevel = VisibilityLevel.FAMILY,
+    ) -> Place:
+        session = self._validate_session(session_id)
+        return self.place.create_place(
+            created_by_id=session.account_id,
+            name=name,
+            address=address,
+            family_context_id=family_context_id,
+            visibility=visibility,
+        )
+
+    def get_place_for_session(self, session_id: str, place_id: str) -> Place:
+        session = self._validate_session(session_id)
+        place = self.place.get_place_for_account(place_id, session.account_id)
+        if place is None:
+            raise ValueError("Place does not exist")
+        return place
+
+    def list_places_for_session(self, session_id: str, family_context_id: str) -> List[Place]:
+        session = self._validate_session(session_id)
+        return self.place.list_places_for_context_for_account(family_context_id, session.account_id)
+
+    def create_media_item_for_session(
+        self,
+        session_id: str,
+        uri: str,
+        media_type: MediaType = MediaType.PHOTO,
+        caption: str = "",
+        family_context_id: Optional[str] = None,
+        event_id: Optional[str] = None,
+        memory_id: Optional[str] = None,
+        visibility: VisibilityLevel = VisibilityLevel.FAMILY,
+    ) -> MediaItem:
+        session = self._validate_session(session_id)
+        return self.media.create_media_item(
+            owner_id=session.account_id,
+            uri=uri,
+            media_type=media_type,
+            caption=caption,
+            family_context_id=family_context_id,
+            event_id=event_id,
+            memory_id=memory_id,
+            visibility=visibility,
+        )
+
+    def get_media_item_for_session(self, session_id: str, media_id: str) -> MediaItem:
+        session = self._validate_session(session_id)
+        item = self.media.get_media_item_for_account(media_id, session.account_id)
+        if item is None:
+            raise ValueError("Media item does not exist")
+        return item
+
+    def list_media_items_for_event_for_session(self, session_id: str, event_id: str) -> List[MediaItem]:
+        session = self._validate_session(session_id)
+        return self.media.list_media_items_for_event_for_account(event_id, session.account_id)
+
+    def list_media_items_for_memory_for_session(self, session_id: str, memory_id: str) -> List[MediaItem]:
+        session = self._validate_session(session_id)
+        return self.media.list_media_items_for_memory_for_account(memory_id, session.account_id)
+
+    def create_media_album_for_session(
+        self,
+        session_id: str,
+        title: str,
+        description: str = "",
+        family_context_id: Optional[str] = None,
+        media_ids: Optional[List[str]] = None,
+        visibility: VisibilityLevel = VisibilityLevel.FAMILY,
+    ) -> MediaAlbum:
+        session = self._validate_session(session_id)
+        return self.media.create_media_album(
+            owner_id=session.account_id,
+            title=title,
+            description=description,
+            family_context_id=family_context_id,
+            media_ids=media_ids,
+            visibility=visibility,
+        )
+
+    def get_media_album_for_session(self, session_id: str, album_id: str) -> MediaAlbum:
+        session = self._validate_session(session_id)
+        album = self.media.get_media_album_for_account(album_id, session.account_id)
+        if album is None:
+            raise ValueError("Media album does not exist")
+        return album
+
+    def add_media_to_album_for_session(self, session_id: str, album_id: str, media_id: str) -> MediaAlbum:
+        session = self._validate_session(session_id)
+        return self.media.add_media_to_album(album_id, media_id, session.account_id)
+
+    def get_timeline_for_session(
+        self, session_id: str, family_context_id: str, limit: Optional[int] = None
+    ) -> List[TimelineProjectionEntry]:
+        session = self._validate_session(session_id)
+        return self.timeline.get_timeline_for_family_context_for_account(
+            family_context_id=family_context_id, account_id=session.account_id, limit=limit
+        )
+
+    def create_notification_for_session(
+        self,
+        session_id: str,
+        recipient_id: str,
+        notification_type: NotificationType,
+        title: str,
+        message: str,
+        family_context_id: Optional[str] = None,
+        target_resource_id: Optional[str] = None,
+    ) -> Notification:
+        session = self._validate_session(session_id)
+        return self.notification.create_notification(
+            sender_id=session.account_id,
+            recipient_id=recipient_id,
+            notification_type=notification_type,
+            title=title,
+            message=message,
+            family_context_id=family_context_id,
+            target_resource_id=target_resource_id,
+        )
+
+    def get_notification_for_session(self, session_id: str, notification_id: str) -> Notification:
+        session = self._validate_session(session_id)
+        notif = self.notification.get_notification_for_account(notification_id, session.account_id)
+        if notif is None:
+            raise ValueError("Notification does not exist")
+        return notif
+
+    def list_notifications_for_session(self, session_id: str) -> List[Notification]:
+        session = self._validate_session(session_id)
+        return self.notification.list_notifications_for_account(session.account_id)
+
+    def mark_notification_read_for_session(self, session_id: str, notification_id: str) -> Notification:
+        session = self._validate_session(session_id)
+        return self.notification.mark_notification_read(notification_id, session.account_id)
+
+    def create_share_link_for_session(
+        self,
+        session_id: str,
+        resource_type: ShareResourceType,
+        resource_id: str,
+        family_context_id: Optional[str] = None,
+        expires_in_minutes: Optional[int] = None,
+    ) -> ShareLink:
+        session = self._validate_session(session_id)
+        return self.sharing.create_share_link(
+            created_by_id=session.account_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            family_context_id=family_context_id,
+            expires_in_minutes=expires_in_minutes,
+        )
+
+    def resolve_share_token(self, token: str):
+        return self.sharing.resolve_share_token(token)
+
+    def revoke_share_link_for_session(self, session_id: str, token: str) -> ShareLink:
+        session = self._validate_session(session_id)
+        return self.sharing.revoke_share_link(token, session.account_id)
+
+
+
+
 

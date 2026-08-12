@@ -24,6 +24,43 @@ class EventStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class MediaType(str, enum.Enum):
+    PHOTO = "photo"
+    VIDEO = "video"
+    AUDIO = "audio"
+    DOCUMENT = "document"
+
+
+class TimelineItemType(str, enum.Enum):
+    EVENT = "event"
+    MEMORY = "memory"
+    MEDIA = "media"
+    PLACE = "place"
+
+
+class NotificationType(str, enum.Enum):
+    EVENT_INVITE = "event_invite"
+    MEMORY_ADDED = "memory_added"
+    RELATIONSHIP_UPDATE = "relationship_update"
+    SYSTEM_ALERT = "system_alert"
+
+
+class NotificationStatus(str, enum.Enum):
+    UNREAD = "unread"
+    READ = "read"
+    ARCHIVED = "archived"
+
+
+class ShareResourceType(str, enum.Enum):
+    EVENT = "event"
+    MEMORY = "memory"
+    MEDIA_ITEM = "media_item"
+    MEDIA_ALBUM = "media_album"
+
+
+
+
+
 class RelationshipType(str, enum.Enum):
     PARENT = "parent"
     CHILD = "child"
@@ -107,12 +144,24 @@ class Consent:
 
 
 @dataclass
+class Place:
+    id: str = field(default_factory=_new_id)
+    name: str = ""
+    address: str = ""
+    family_context_id: Optional[str] = None
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
 class Event:
     id: str = field(default_factory=_new_id)
     title: str = ""
     description: str = ""
     owner_id: str = ""
     family_context_id: Optional[str] = None
+    place_id: Optional[str] = None
     start_time: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
     end_time: Optional[datetime.datetime] = None
     status: EventStatus = EventStatus.PLANNED
@@ -120,6 +169,7 @@ class Event:
     consent: Optional[Consent] = None
     provenance: Optional[ProvenanceMetadata] = None
     created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
 
 
 @dataclass
@@ -131,6 +181,35 @@ class Memory:
     recorded_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
     visibility: VisibilityLevel = VisibilityLevel.FAMILY
     provenance: Optional[ProvenanceMetadata] = None
+
+
+@dataclass
+class MediaItem:
+    id: str = field(default_factory=_new_id)
+    uri: str = ""
+    media_type: MediaType = MediaType.PHOTO
+    caption: str = ""
+    owner_id: str = ""
+    family_context_id: Optional[str] = None
+    event_id: Optional[str] = None
+    memory_id: Optional[str] = None
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class MediaAlbum:
+    id: str = field(default_factory=_new_id)
+    title: str = ""
+    description: str = ""
+    owner_id: str = ""
+    family_context_id: Optional[str] = None
+    media_ids: List[str] = field(default_factory=list)
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
 
 
 @dataclass
@@ -150,6 +229,20 @@ class CalendarProjectionEntry:
     status: EventStatus
     visibility: VisibilityLevel
     family_context_id: Optional[str] = None
+
+
+@dataclass
+class TimelineProjectionEntry:
+    id: str
+    item_type: TimelineItemType
+    timestamp: datetime.datetime
+    title: str
+    summary: str
+    owner_id: str
+    family_context_id: Optional[str]
+    visibility: VisibilityLevel
+    ref_id: str
+
 
 
 @dataclass
@@ -176,5 +269,36 @@ class FamilyTopologyResult:
     context: FamilyContext
     members: List[FamilyTopologyMember] = field(default_factory=list)
     relationships: List[Relationship] = field(default_factory=list)
+
+
+@dataclass
+class Notification:
+    id: str = field(default_factory=_new_id)
+    recipient_id: str = ""
+    sender_id: str = ""
+    notification_type: NotificationType = NotificationType.SYSTEM_ALERT
+    title: str = ""
+    message: str = ""
+    family_context_id: Optional[str] = None
+    target_resource_id: Optional[str] = None
+    status: NotificationStatus = NotificationStatus.UNREAD
+    visibility: VisibilityLevel = VisibilityLevel.PRIVATE
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class ShareLink:
+    id: str = field(default_factory=_new_id)
+    token: str = field(default_factory=_new_id)
+    resource_type: ShareResourceType = ShareResourceType.EVENT
+    resource_id: str = ""
+    created_by_id: str = ""
+    family_context_id: Optional[str] = None
+    is_revoked: bool = False
+    expires_at: Optional[datetime.datetime] = None
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
 
 

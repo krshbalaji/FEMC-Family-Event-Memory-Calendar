@@ -10,11 +10,17 @@ from .models import (
     Event,
     EventStatus,
     FamilyContext,
+    MediaAlbum,
+    MediaItem,
     Memory,
+    Notification,
     Person,
+    Place,
     ProvenanceMetadata,
     Relationship,
     SearchResultEntry,
+    ShareLink,
+    TimelineProjectionEntry,
 )
 
 
@@ -28,6 +34,13 @@ class CanonicalRepository:
         self.family_contexts: Dict[str, FamilyContext] = {}
         self.events: Dict[str, Event] = {}
         self.memories: Dict[str, Memory] = {}
+        self.places: Dict[str, Place] = {}
+        self.media_items: Dict[str, MediaItem] = {}
+        self.media_albums: Dict[str, MediaAlbum] = {}
+        self.notifications: Dict[str, Notification] = {}
+        self.share_links: Dict[str, ShareLink] = {}
+
+
 
     def add_person(self, person: Person) -> Person:
         self.persons[person.id] = person
@@ -91,8 +104,71 @@ class CanonicalRepository:
     def list_family_contexts(self) -> List[FamilyContext]:
         return list(self.family_contexts.values())
 
+    def add_place(self, place: Place) -> Place:
+        if place.provenance is None:
+            raise ValueError("Place provenance is required for canonical data")
+        self.places[place.id] = place
+        return place
+
+    def get_place(self, place_id: str) -> Optional[Place]:
+        return self.places.get(place_id)
+
+    def list_places(self) -> List[Place]:
+        return list(self.places.values())
+
+    def add_media_item(self, item: MediaItem) -> MediaItem:
+        if item.provenance is None:
+            raise ValueError("Media item provenance is required for canonical data")
+        self.media_items[item.id] = item
+        return item
+
+    def get_media_item(self, media_id: str) -> Optional[MediaItem]:
+        return self.media_items.get(media_id)
+
+    def list_media_items(self) -> List[MediaItem]:
+        return list(self.media_items.values())
+
+    def add_media_album(self, album: MediaAlbum) -> MediaAlbum:
+        if album.provenance is None:
+            raise ValueError("Media album provenance is required for canonical data")
+        self.media_albums[album.id] = album
+        return album
+
+    def get_media_album(self, album_id: str) -> Optional[MediaAlbum]:
+        return self.media_albums.get(album_id)
+
+    def list_media_albums(self) -> List[MediaAlbum]:
+        return list(self.media_albums.values())
+
     def list_relationships(self) -> List[Relationship]:
         return list(self.relationships.values())
+
+    def add_notification(self, notification: Notification) -> Notification:
+        if notification.provenance is None:
+            raise ValueError("Notification provenance is required for canonical data")
+        self.notifications[notification.id] = notification
+        return notification
+
+    def get_notification(self, notification_id: str) -> Optional[Notification]:
+        return self.notifications.get(notification_id)
+
+    def list_notifications(self) -> List[Notification]:
+        return list(self.notifications.values())
+
+    def add_share_link(self, share_link: ShareLink) -> ShareLink:
+        if share_link.provenance is None:
+            raise ValueError("Share link provenance is required for canonical data")
+        self.share_links[share_link.token] = share_link
+        return share_link
+
+    def get_share_link_by_token(self, token: str) -> Optional[ShareLink]:
+        return self.share_links.get(token)
+
+    def list_share_links(self) -> List[ShareLink]:
+        return list(self.share_links.values())
+
+
+
 
 
 
@@ -100,6 +176,20 @@ class DerivedRepository:
     def __init__(self) -> None:
         self.calendar_entries: List[CalendarProjectionEntry] = []
         self.search_entries: List[SearchResultEntry] = []
+        self.timeline_entries: List[TimelineProjectionEntry] = []
+
+    def add_timeline_entry(self, entry: TimelineProjectionEntry) -> TimelineProjectionEntry:
+        self.timeline_entries.append(entry)
+        return entry
+
+    def get_timeline_entries(self, family_context_id: Optional[str] = None) -> List[TimelineProjectionEntry]:
+        if family_context_id is None:
+            return list(self.timeline_entries)
+        return [e for e in self.timeline_entries if e.family_context_id == family_context_id]
+
+    def clear_timeline_entries(self) -> None:
+        self.timeline_entries.clear()
+
 
     def add_calendar_entry(self, entry: CalendarProjectionEntry) -> CalendarProjectionEntry:
         self.calendar_entries.append(entry)
