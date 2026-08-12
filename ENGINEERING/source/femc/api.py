@@ -4,6 +4,7 @@ import datetime
 from typing import List, Optional
 
 from .models import (
+    ActionProposal,
     Confidence,
     ContextDiscoveryResult,
     DataExportResult,
@@ -12,6 +13,7 @@ from .models import (
     EventWithMemories,
     ExportValidationResult,
     FamilyTopologyResult,
+    InsightAnalysis,
     MediaAlbum,
     MediaItem,
     MediaType,
@@ -20,6 +22,8 @@ from .models import (
     NotificationStatus,
     NotificationType,
     Place,
+    ProposalStatus,
+    ProposalType,
     Relationship,
     RelationshipType,
     ShareLink,
@@ -37,6 +41,7 @@ from .services import (
     DataPortabilityService,
     EventService,
     IdentityService,
+    MayilService,
     MediaService,
     MemoryService,
     NotificationService,
@@ -62,7 +67,9 @@ class FEMCApi:
         self.notification = NotificationService(self.canonical, self.authorization)
         self.sharing = SharingService(self.canonical, self.authorization)
         self.data_portability = DataPortabilityService(self.canonical, self.derived, self.authorization)
+        self.mayil = MayilService(self.canonical, self.derived, self.authorization, self.event)
         self.search = SearchService(self.derived)
+
 
 
 
@@ -396,6 +403,40 @@ class FEMCApi:
 
     def validate_data_export(self, payload: dict) -> ExportValidationResult:
         return self.data_portability.validate_data_export(payload)
+
+    def analyze_family_insights_for_session(self, session_id: str, family_context_id: str) -> InsightAnalysis:
+        session = self._validate_session(session_id)
+        return self.mayil.generate_insights(session.account_id, family_context_id)
+
+    def propose_event_recommendation_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        title: str,
+        description: str,
+        start_time: Optional[datetime.datetime] = None,
+    ) -> ActionProposal:
+        session = self._validate_session(session_id)
+        return self.mayil.propose_event_recommendation(
+            account_id=session.account_id,
+            family_context_id=family_context_id,
+            title=title,
+            description=description,
+            start_time=start_time,
+        )
+
+    def get_action_proposals_for_session(self, session_id: str, family_context_id: str) -> List[ActionProposal]:
+        session = self._validate_session(session_id)
+        return self.mayil.list_proposals_for_account(session.account_id, family_context_id)
+
+    def approve_action_proposal_for_session(self, session_id: str, proposal_id: str) -> ActionProposal:
+        session = self._validate_session(session_id)
+        return self.mayil.approve_action_proposal(session.account_id, proposal_id)
+
+    def reject_action_proposal_for_session(self, session_id: str, proposal_id: str) -> ActionProposal:
+        session = self._validate_session(session_id)
+        return self.mayil.reject_action_proposal(session.account_id, proposal_id)
+
 
 
 

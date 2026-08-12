@@ -5,11 +5,13 @@ from typing import Dict, List, Optional
 
 from .models import (
     Account,
+    ActionProposal,
     AuthenticatedSession,
     CalendarProjectionEntry,
     Event,
     EventStatus,
     FamilyContext,
+    InsightAnalysis,
     MediaAlbum,
     MediaItem,
     Memory,
@@ -22,6 +24,7 @@ from .models import (
     ShareLink,
     TimelineProjectionEntry,
 )
+
 
 
 
@@ -39,6 +42,9 @@ class CanonicalRepository:
         self.media_albums: Dict[str, MediaAlbum] = {}
         self.notifications: Dict[str, Notification] = {}
         self.share_links: Dict[str, ShareLink] = {}
+        self.action_proposals: Dict[str, ActionProposal] = {}
+        self.insight_analyses: Dict[str, InsightAnalysis] = {}
+
 
 
 
@@ -166,6 +172,31 @@ class CanonicalRepository:
 
     def list_share_links(self) -> List[ShareLink]:
         return list(self.share_links.values())
+
+    def add_action_proposal(self, proposal: ActionProposal) -> ActionProposal:
+        if proposal.provenance is None:
+            raise ValueError("Action proposal provenance is required")
+        self.action_proposals[proposal.id] = proposal
+        return proposal
+
+    def get_action_proposal(self, proposal_id: str) -> Optional[ActionProposal]:
+        return self.action_proposals.get(proposal_id)
+
+    def list_action_proposals(self) -> List[ActionProposal]:
+        return list(self.action_proposals.values())
+
+    def add_insight_analysis(self, analysis: InsightAnalysis) -> InsightAnalysis:
+        if analysis.provenance is None:
+            raise ValueError("Insight analysis provenance is required")
+        self.insight_analyses[analysis.id] = analysis
+        return analysis
+
+    def get_insight_analysis(self, analysis_id: str) -> Optional[InsightAnalysis]:
+        return self.insight_analyses.get(analysis_id)
+
+    def list_insight_analyses(self) -> List[InsightAnalysis]:
+        return list(self.insight_analyses.values())
+
 
 
 

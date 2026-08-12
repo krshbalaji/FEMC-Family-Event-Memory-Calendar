@@ -5,7 +5,7 @@ import datetime
 import enum
 import uuid
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 def _new_id() -> str:
@@ -56,6 +56,21 @@ class ShareResourceType(str, enum.Enum):
     MEMORY = "memory"
     MEDIA_ITEM = "media_item"
     MEDIA_ALBUM = "media_album"
+
+
+class ProposalStatus(str, enum.Enum):
+    PROPOSED = "proposed"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXECUTED = "executed"
+
+
+class ProposalType(str, enum.Enum):
+    EVENT_RECOMMENDATION = "event_recommendation"
+    MEMORY_ENHANCEMENT = "memory_enhancement"
+    RELATIONSHIP_SUGGESTION = "relationship_suggestion"
+    CALENDAR_OPTIMIZATION = "calendar_optimization"
+
 
 
 
@@ -317,6 +332,33 @@ class ExportValidationResult:
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     record_counts: Dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class ActionProposal:
+    id: str = field(default_factory=_new_id)
+    proposal_type: ProposalType = ProposalType.EVENT_RECOMMENDATION
+    title: str = ""
+    reasoning: str = ""
+    proposed_changes: Dict[str, Any] = field(default_factory=dict)
+    confidence: Confidence = Confidence.MEDIUM
+    family_context_id: str = ""
+    target_account_id: str = ""
+    status: ProposalStatus = ProposalStatus.PROPOSED
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class InsightAnalysis:
+    id: str = field(default_factory=_new_id)
+    title: str = ""
+    analysis_summary: str = ""
+    family_context_id: str = ""
+    confidence: Confidence = Confidence.MEDIUM
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
 
 
 

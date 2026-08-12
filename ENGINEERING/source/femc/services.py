@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from .models import (
     Account,
+    ActionProposal,
     AuthenticatedSession,
     CalendarProjectionEntry,
     Confidence,
@@ -14,7 +15,7 @@ from .models import (
     EventStatus,
     ExportValidationResult,
     FamilyContext,
-
+    InsightAnalysis,
     MediaAlbum,
     MediaItem,
     MediaType,
@@ -24,6 +25,8 @@ from .models import (
     NotificationType,
     Person,
     Place,
+    ProposalStatus,
+    ProposalType,
     ProvenanceMetadata,
     ProvenanceSourceType,
     Relationship,
@@ -1002,7 +1005,10 @@ class DataPortabilityService:
             "media_albums": [],
             "notifications": [],
             "share_links": [],
+            "action_proposals": [],
+            "insight_analyses": [],
         }
+
 
         created_by = context.provenance.created_by_id if context.provenance else ""
         records["family_contexts"].append({
@@ -1143,12 +1149,33 @@ class DataPortabilityService:
                     "is_revoked": link.is_revoked,
                 })
 
+        for prop in self.canonical.list_action_proposals():
+            if prop.family_context_id == family_context_id and prop.target_account_id == account_id:
+                p_status = prop.status.value if hasattr(prop.status, "value") else str(prop.status)
+                p_type = prop.proposal_type.value if hasattr(prop.proposal_type, "value") else str(prop.proposal_type)
+                records["action_proposals"].append({
+                    "id": prop.id,
+                    "proposal_type": p_type,
+                    "title": prop.title,
+                    "reasoning": prop.reasoning,
+                    "target_account_id": prop.target_account_id,
+                    "status": p_status,
+                })
+
+        for insight in self.canonical.list_insight_analyses():
+            if insight.family_context_id == family_context_id and (insight.provenance is None or insight.provenance.created_by_id == account_id):
+                records["insight_analyses"].append({
+                    "id": insight.id,
+                    "title": insight.title,
+                    "analysis_summary": insight.analysis_summary,
+                })
 
         return DataExportResult(
             family_context_id=family_context_id,
             provenance=provenance,
             records=records,
         )
+
 
     def validate_data_export(self, payload: Dict[str, Any]) -> ExportValidationResult:
         errors: List[str] = []
@@ -1191,6 +1218,178 @@ class DataPortabilityService:
             warnings=warnings,
             record_counts=counts,
         )
+
+
+class MayilService:
+    def __init__(
+        self,
+        canonical: CanonicalRepository,
+        derived: DerivedRepository,
+        auth: AuthorizationService,
+        event_service: EventService,
+    ) -> None:
+        self.canonical = canonical
+        self.derived = derived
+        self.auth = auth
+        self.event_service = event_service
+
+    def generate_insights(self, account_id: str, family_context_id: str) -> InsightAnalysis:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        # Mayil READS data authorized for the account
+        visible_events = [ev for ev in self.canonical.list_events() if ev.family_context_id == family_context_id and self.auth.can_view_event(account_id, ev, context)]
+        visible_memories = [m for m in self.canonical.list_memories() if self.auth.can_view_memory(account_id, m, context)]
+        visible_places = [p for p in self.canonical.list_places() if p.family_context_id == family_context_id and self.auth.can_view_place(account_id, p, context)]
+
+        summary = f"Analyzed {len(visible_events)} events, {len(visible_memories)} memories, and {len(visible_places)} places for context '{context.name}'."
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="mayil-ai-engine",
+            created_by_id=account_id,
+            audit_trail=["mayil-analysis-generated"],
+        )
+
+        analysis = InsightAnalysis(
+            title=f"Mayil Intelligence Summary: {context.name}",
+            analysis_summary=summary,
+            family_context_id=family_context_id,
+            confidence=Confidence.HIGH,
+            provenance=provenance,
+        )
+
+        return self.canonical.add_insight_analysis(analysis)
+
+    def propose_event_recommendation(
+        self,
+        account_id: str,
+        family_context_id: str,
+        title: str,
+        description: str,
+        start_time: Optional[datetime.datetime] = None,
+    ) -> ActionProposal:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="mayil-ai-engine",
+            created_by_id=account_id,
+            audit_trail=["proposal-created"],
+        )
+
+        st_str = start_time.isoformat() if start_time else (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat()
+
+        proposed_changes = {
+            "title": title,
+            "description": description,
+            "family_context_id": family_context_id,
+            "start_time": st_str,
+        }
+
+        proposal = ActionProposal(
+            proposal_type=ProposalType.EVENT_RECOMMENDATION,
+            title=f"Recommended Event: {title}",
+            reasoning=f"Mayil AI recommends scheduling '{title}' based on family activity analysis.",
+            proposed_changes=proposed_changes,
+            confidence=Confidence.HIGH,
+            family_context_id=family_context_id,
+            target_account_id=account_id,
+            status=ProposalStatus.PROPOSED,
+            provenance=provenance,
+        )
+
+        return self.canonical.add_action_proposal(proposal)
+
+    def list_proposals_for_account(self, account_id: str, family_context_id: str) -> List[ActionProposal]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        return [
+            prop for prop in self.canonical.list_action_proposals()
+            if prop.family_context_id == family_context_id and prop.target_account_id == account_id
+        ]
+
+    def approve_action_proposal(self, account_id: str, proposal_id: str) -> ActionProposal:
+        proposal = self.canonical.get_action_proposal(proposal_id)
+        if proposal is None:
+            raise ValueError("Action proposal not found")
+
+        if proposal.target_account_id != account_id:
+            raise PermissionError("Only target account can approve this proposal")
+
+        if proposal.status != ProposalStatus.PROPOSED:
+            raise ValueError(f"Proposal cannot be approved in state '{proposal.status}'")
+
+        context = self.canonical.get_family_context(proposal.family_context_id)
+        if context is None or account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        # Mark APPROVED
+        proposal.status = ProposalStatus.APPROVED
+
+        try:
+            # Execute proposed action ONLY through existing domain services
+            if proposal.proposal_type == ProposalType.EVENT_RECOMMENDATION:
+                changes = proposal.proposed_changes
+                title = changes.get("title", "Proposed Event")
+                desc = changes.get("description", "")
+                fc_id = changes.get("family_context_id")
+                st_raw = changes.get("start_time")
+                st = datetime.datetime.fromisoformat(st_raw) if st_raw else datetime.datetime.utcnow()
+
+                self.event_service.create_event(
+                    owner_id=account_id,
+                    title=title,
+                    description=desc,
+                    family_context_id=fc_id,
+                    start_time=st,
+                    end_time=None,
+                )
+            else:
+                raise ValueError(f"Unsupported proposal type for execution: {proposal.proposal_type}")
+        except Exception:
+            proposal.status = ProposalStatus.PROPOSED
+            raise
+
+        # Mark EXECUTED
+        proposal.status = ProposalStatus.EXECUTED
+
+
+        if proposal.provenance and proposal.provenance.audit_trail is not None:
+            proposal.provenance.audit_trail.append(f"approved-from-mayil-proposal:{proposal.id}")
+
+        return proposal
+
+    def reject_action_proposal(self, account_id: str, proposal_id: str) -> ActionProposal:
+        proposal = self.canonical.get_action_proposal(proposal_id)
+        if proposal is None:
+            raise ValueError("Action proposal not found")
+
+        if proposal.target_account_id != account_id:
+            raise PermissionError("Only target account can reject this proposal")
+
+        if proposal.status != ProposalStatus.PROPOSED:
+            raise ValueError(f"Proposal cannot be rejected in state '{proposal.status}'")
+
+        # Mark REJECTED without mutating any canonical domain data
+        proposal.status = ProposalStatus.REJECTED
+
+        if proposal.provenance and proposal.provenance.audit_trail is not None:
+            proposal.provenance.audit_trail.append(f"rejected-from-mayil-proposal:{proposal.id}")
+
+        return proposal
+
 
 
 
