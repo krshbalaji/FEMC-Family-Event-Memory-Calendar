@@ -88,6 +88,10 @@ class CanonicalRepository:
     def list_family_contexts(self) -> List[FamilyContext]:
         return list(self.family_contexts.values())
 
+    def list_relationships(self) -> List[Relationship]:
+        return list(self.relationships.values())
+
+
 
 class DerivedRepository:
     def __init__(self) -> None:

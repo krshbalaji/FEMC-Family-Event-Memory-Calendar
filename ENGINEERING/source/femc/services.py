@@ -7,6 +7,7 @@ from .models import (
     Account,
     AuthenticatedSession,
     CalendarProjectionEntry,
+    Confidence,
     Consent,
     Event,
     EventStatus,
@@ -14,9 +15,12 @@ from .models import (
     Memory,
     ProvenanceMetadata,
     ProvenanceSourceType,
+    Relationship,
+    RelationshipType,
     SearchResultEntry,
     VisibilityLevel,
 )
+
 from .repositories import CanonicalRepository, DerivedRepository
 
 
@@ -101,6 +105,58 @@ class IdentityService:
         if account_id not in context.member_ids:
             context.member_ids.append(account_id)
         return context
+
+    def create_relationship(
+        self,
+        source_person_id: str,
+        target_person_id: str,
+        relationship_type: RelationshipType = RelationshipType.MEMBER,
+        confidence: Confidence = Confidence.MEDIUM,
+    ) -> Relationship:
+        source_person = self.canonical.get_person(source_person_id)
+        target_person = self.canonical.get_person(target_person_id)
+        if source_person is None or target_person is None:
+            raise ValueError("Referenced person does not exist")
+        relationship = Relationship(
+            source_person_id=source_person_id,
+            target_person_id=target_person_id,
+            relationship_type=relationship_type,
+            confidence=confidence,
+        )
+        saved = self.canonical.add_relationship(relationship)
+        if saved.id not in source_person.relationships:
+            source_person.relationships.append(saved.id)
+        if saved.id not in target_person.relationships:
+            target_person.relationships.append(saved.id)
+        return saved
+
+    def get_family_topology_for_account(self, family_context_id: str, account_id: str) -> FamilyTopologyResult:
+        from .models import FamilyTopologyMember, FamilyTopologyResult
+
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        topology_members: List[FamilyTopologyMember] = []
+        member_person_ids = set()
+
+        for m_id in context.member_ids:
+            acc = self.canonical.get_account(m_id)
+            if acc:
+                person = self.canonical.get_person(acc.person_id) if acc.person_id else None
+                if person:
+                    member_person_ids.add(person.id)
+                topology_members.append(FamilyTopologyMember(account=acc, person=person))
+
+        topology_relationships: List[Relationship] = []
+        for rel in self.canonical.list_relationships():
+            if rel.source_person_id in member_person_ids and rel.target_person_id in member_person_ids:
+                topology_relationships.append(rel)
+
+        return FamilyTopologyResult(context=context, members=topology_members, relationships=topology_relationships)
+
 
 
 class EventService:

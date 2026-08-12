@@ -3,7 +3,18 @@ from __future__ import annotations
 import datetime
 from typing import List, Optional
 
-from .models import ContextDiscoveryResult, Event, EventWithMemories, Memory, VisibilityLevel
+from .models import (
+    Confidence,
+    ContextDiscoveryResult,
+    Event,
+    EventWithMemories,
+    FamilyTopologyResult,
+    Memory,
+    Relationship,
+    RelationshipType,
+    VisibilityLevel,
+)
+
 from .repositories import CanonicalRepository, DerivedRepository
 from .services import (
     AuthorizationService,
@@ -129,3 +140,31 @@ class FEMCApi:
                 except PermissionError:
                     continue
         return visible_results
+
+    def create_relationship_for_session(
+        self,
+        session_id: str,
+        source_person_id: str,
+        target_person_id: str,
+        relationship_type: RelationshipType = RelationshipType.MEMBER,
+        confidence: Confidence = Confidence.MEDIUM,
+    ) -> Relationship:
+        session = self._validate_session(session_id)
+        source_person = self.canonical.get_person(source_person_id)
+        target_person = self.canonical.get_person(target_person_id)
+        if source_person is None or target_person is None:
+            raise ValueError("Referenced person does not exist")
+        context = self.identity.resolve_family_context(session.account_id)
+        if context is None:
+            raise PermissionError("Account is not authorized to create relationships")
+        return self.identity.create_relationship(
+            source_person_id=source_person_id,
+            target_person_id=target_person_id,
+            relationship_type=relationship_type,
+            confidence=confidence,
+        )
+
+    def get_family_topology_for_session(self, session_id: str, family_context_id: str) -> FamilyTopologyResult:
+        session = self._validate_session(session_id)
+        return self.identity.get_family_topology_for_account(family_context_id, session.account_id)
+

@@ -164,3 +164,17 @@ class ContextDiscoveryResult:
     calendar_entries: List[CalendarProjectionEntry] = field(default_factory=list)
     memories: List[Memory] = field(default_factory=list)
 
+
+@dataclass
+class FamilyTopologyMember:
+    account: Account
+    person: Optional[Person] = None
+
+
+@dataclass
+class FamilyTopologyResult:
+    context: FamilyContext
+    members: List[FamilyTopologyMember] = field(default_factory=list)
+    relationships: List[Relationship] = field(default_factory=list)
+
+
