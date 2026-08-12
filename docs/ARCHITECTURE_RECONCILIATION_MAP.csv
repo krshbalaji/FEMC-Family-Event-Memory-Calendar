@@ -1,0 +1,38 @@
+CURRENT_PATH,ACTION,TARGET_PATH,REASON,SOURCE/AUTHORITY,CONFIDENCE
+ARCHITECTURE/README.md,MODIFY,ARCHITECTURE/README.md,Stale index relative to actual ARCHITECTURE tree,ARCHITECTURE README content,High
+FEMC_ARCHITECTURE_INVENTORY_AUDIT.md,KEEP,FEMC_ARCHITECTURE_INVENTORY_AUDIT.md,Historical audit evidence not canonical,Audit provenance,High
+MEMORY/004-MEDIA-PROCESSING-ALBUMS-AND-DISCOVERY/MEDIA_ALBUM_AND_COLLECTION_MODEL.md,MERGE,MEDIA/004-MEDIA-PROCESSING-ALBUMS-AND-DISCOVERY/MEDIA_ALBUM_AND_COLLECTION_MODEL.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/004-MEDIA-PROCESSING-ALBUMS-AND-DISCOVERY/MEDIA_PROCESSING_AND_TRANSCODING_MODEL.md,MERGE,MEDIA/004-MEDIA-PROCESSING-ALBUMS-AND-DISCOVERY/MEDIA_PROCESSING_AND_TRANSCODING_MODEL.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/004-MEDIA-PROCESSING-ALBUMS-AND-DISCOVERY/MEDIA_SEARCH_AND_DISCOVERY_MODEL.md,MERGE,MEDIA/004-MEDIA-PROCESSING-ALBUMS-AND-DISCOVERY/MEDIA_SEARCH_AND_DISCOVERY_MODEL.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/005-MEDIA-INTELLIGENCE-AND-SHARING/MEDIA_ACCESSIBLE_PRESENTATION_MODEL.md,MERGE,MEDIA/005-MEDIA-INTELLIGENCE-AND-SHARING/MEDIA_ACCESSIBLE_PRESENTATION_MODEL.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/005-MEDIA-INTELLIGENCE-AND-SHARING/MEDIA_AI_ANALYSIS_AND_TRANSFORMATION_GOVERNANCE.md,MERGE,MEDIA/005-MEDIA-INTELLIGENCE-AND-SHARING/MEDIA_AI_ANALYSIS_AND_TRANSFORMATION_GOVERNANCE.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/005-MEDIA-INTELLIGENCE-AND-SHARING/MEDIA_SHARING_AND_EXTERNAL_DELIVERY_MODEL.md,MERGE,MEDIA/005-MEDIA-INTELLIGENCE-AND-SHARING/MEDIA_SHARING_AND_EXTERNAL_DELIVERY_MODEL.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_CLOSURE_AND_CONTINUOUS_EVOLUTION.md,MERGE,MEDIA/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_CLOSURE_AND_CONTINUOUS_EVOLUTION.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_NEGATIVE_TESTING_EXPANDED.md,MERGE,MEDIA/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_NEGATIVE_TESTING_EXPANDED.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_PROVIDER_MIGRATION_AND_RECOVERY.md,MERGE,MEDIA/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_PROVIDER_MIGRATION_AND_RECOVERY.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+MEMORY/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_STORAGE_SCALE_AND_COST_MODEL.md,MERGE,MEDIA/006-MEDIA-ASSURANCE-AND-CLOSURE/MEDIA_STORAGE_SCALE_AND_COST_MODEL.md,Exact duplicate wrong-domain media artifact,Exact file hash duplicate,High
+ENGINEERING/002-ENGINEERING-DELIVERY-AND-QUALITY,HUMAN-DECISION,,Duplicate prefix 002 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/002-IMPLEMENTATION-GOVERNANCE,HUMAN-DECISION,,Duplicate prefix 002 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/003-ENGINEERING-REPOSITORY-AND-DEVELOPMENT,HUMAN-DECISION,,Duplicate prefix 003 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/003-QUALITY-ENGINEERING,HUMAN-DECISION,,Duplicate prefix 003 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/004-DOMAIN-IMPLEMENTATION-DESIGN,HUMAN-DECISION,,Duplicate prefix 004 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/004-TESTING-AUTOMATION-AND-CI,HUMAN-DECISION,,Duplicate prefix 004 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/005-DATA-IMPLEMENTATION-DESIGN,HUMAN-DECISION,,Duplicate prefix 005 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/005-RELEASE-DEPLOYMENT-AND-OPERATIONS,HUMAN-DECISION,,Duplicate prefix 005 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/006-ENGINEERING-ASSURANCE-AND-CLOSURE,HUMAN-DECISION,,Duplicate prefix 006 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/006-SECURITY-IMPLEMENTATION,HUMAN-DECISION,,Duplicate prefix 006 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/007-API-AND-INTEGRATION-IMPLEMENTATION,HUMAN-DECISION,,Duplicate prefix 007 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/007-OBSERVABILITY-PERFORMANCE-AND-RELIABILITY,HUMAN-DECISION,,Duplicate prefix 007 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/008-AI-IMPLEMENTATION-GOVERNANCE,HUMAN-DECISION,,Duplicate prefix 008 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/008-MAINTENANCE-TECHNICAL-DEBT-AND-DEPENDENCIES,HUMAN-DECISION,,Duplicate prefix 008 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/009-ENGINEERING-CLOSURE-AND-CONTINUOUS-EVOLUTION,HUMAN-DECISION,,Duplicate prefix 009 requires semantic reconciliation,Duplicate numbering evidence,High
+ENGINEERING/009-MEDIA-AND-SEARCH-IMPLEMENTATION,HUMAN-DECISION,,Duplicate prefix 009 requires semantic reconciliation,Duplicate numbering evidence,High
+PRIVACY/002-FAMILY-DATA-GOVERNANCE,HUMAN-DECISION,,Duplicate prefix 002 requires semantic reconciliation,Duplicate numbering evidence,High
+PRIVACY/002-FAMILY-PRIVACY-AND-CONSENT,HUMAN-DECISION,,Duplicate prefix 002 requires semantic reconciliation,Duplicate numbering evidence,High
+PRIVACY/003-PRIVACY-ASSURANCE-AND-CLOSURE,HUMAN-DECISION,,Duplicate prefix 003 requires semantic reconciliation,Duplicate numbering evidence,High
+PRIVACY/003-PRIVACY-BY-DESIGN-AND-ASSURANCE,HUMAN-DECISION,,Duplicate prefix 003 requires semantic reconciliation,Duplicate numbering evidence,High
+CALENDAR/003-CALENDAR-ASSURANCE-AND-CLOSURE/CALENDAR_CLOSURE_AND_CONTINUOUS_EVOLUTION.md,HUMAN-DECISION,,Closure overlap with CALENDAR/006,Exact filename conflict,High
+CALENDAR/006-CALENDAR-ASSURANCE-AND-CLOSURE/CALENDAR_CLOSURE_AND_CONTINUOUS_EVOLUTION.md,HUMAN-DECISION,,Closure overlap with CALENDAR/003,Exact filename conflict,High
+SEARCH/003-SEARCH-ASSURANCE-AND-CLOSURE/SEARCH_CLOSURE_AND_CONTINUOUS_EVOLUTION.md,HUMAN-DECISION,,Closure overlap with SEARCH/006,Exact filename conflict,High
+SEARCH/006-SEARCH-ASSURANCE-AND-CLOSURE/SEARCH_CLOSURE_AND_CONTINUOUS_EVOLUTION.md,HUMAN-DECISION,,Closure overlap with SEARCH/003,Exact filename conflict,High
+CONSTITUTION/MASTER_INDEX.md,KEEP,CONSTITUTION/MASTER_INDEX.md,Canonical repository navigation spine,Master index content,High
