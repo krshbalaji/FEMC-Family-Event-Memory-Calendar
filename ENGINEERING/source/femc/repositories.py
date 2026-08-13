@@ -8,7 +8,9 @@ from .models import (
     ActionProposal,
     AuthenticatedSession,
     CalendarProjectionEntry,
+    DashboardProjectionEntry,
     Event,
+
     EventStatus,
     FamilyContext,
     InsightAnalysis,
@@ -245,6 +247,23 @@ class DerivedRepository:
         self.calendar_entries: List[CalendarProjectionEntry] = []
         self.search_entries: List[SearchResultEntry] = []
         self.timeline_entries: List[TimelineProjectionEntry] = []
+        self.dashboard_entries: List[DashboardProjectionEntry] = []
+
+    def add_dashboard_entry(self, entry: DashboardProjectionEntry) -> DashboardProjectionEntry:
+        self.dashboard_entries.append(entry)
+        return entry
+
+    def get_dashboard_entries(self, family_context_id: Optional[str] = None) -> List[DashboardProjectionEntry]:
+        if family_context_id is None:
+            return list(self.dashboard_entries)
+        return [e for e in self.dashboard_entries if e.family_context_id == family_context_id]
+
+    def clear_dashboard_entries(self, family_context_id: Optional[str] = None) -> None:
+        if family_context_id is None:
+            self.dashboard_entries.clear()
+        else:
+            self.dashboard_entries = [e for e in self.dashboard_entries if e.family_context_id != family_context_id]
+
 
     def add_timeline_entry(self, entry: TimelineProjectionEntry) -> TimelineProjectionEntry:
         self.timeline_entries.append(entry)

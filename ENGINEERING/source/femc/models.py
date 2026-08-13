@@ -24,6 +24,25 @@ class EventStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class EventCategory(str, enum.Enum):
+    BIRTHDAY = "birthday"
+    ANNIVERSARY = "anniversary"
+    MILESTONE = "milestone"
+    HOLIDAY = "holiday"
+    GENERAL = "general"
+
+
+class DashboardEntryType(str, enum.Enum):
+    UPCOMING_EVENT = "upcoming_event"
+    RECURRING_EVENT = "recurring_event"
+    DUE_REMINDER = "due_reminder"
+    RECENT_MEMORY = "recent_memory"
+    ACTIVE_NOTIFICATION = "active_notification"
+    CELEBRATION_HIGHLIGHT = "celebration_highlight"
+
+
+
+
 class MediaType(str, enum.Enum):
     PHOTO = "photo"
     VIDEO = "video"
@@ -225,6 +244,10 @@ class Event:
     visibility: VisibilityLevel = VisibilityLevel.FAMILY
     consent: Optional[Consent] = None
     recurrence_rule: Optional[RecurrenceRule] = None
+    category: EventCategory = EventCategory.GENERAL
+    target_person_ids: List[str] = field(default_factory=list)
+    milestone_year: Optional[int] = None
+    milestone_anchor_date: Optional[datetime.date] = None
     provenance: Optional[ProvenanceMetadata] = None
     created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
 
@@ -241,6 +264,53 @@ class ReminderConfig:
     created_by_id: str = ""
     provenance: Optional[ProvenanceMetadata] = None
     created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class RichEventDetail:
+    event: Event
+    place: Optional[Place] = None
+    memories: List[Memory] = field(default_factory=list)
+    media_items: List[MediaItem] = field(default_factory=list)
+    reminders: List[ReminderConfig] = field(default_factory=list)
+    target_persons: List[Person] = field(default_factory=list)
+    milestone_year: Optional[int] = None
+    upcoming_occurrences: List[datetime.date] = field(default_factory=list)
+
+
+@dataclass
+class RichPersonDetail:
+    person: Person
+    account: Optional[Account] = None
+    relationships: List[Relationship] = field(default_factory=list)
+    events: List[Event] = field(default_factory=list)
+    memories: List[Memory] = field(default_factory=list)
+    media_items: List[MediaItem] = field(default_factory=list)
+    milestones: List[Event] = field(default_factory=list)
+
+
+@dataclass
+class DashboardProjectionEntry:
+    id: str = field(default_factory=_new_id)
+    family_context_id: str = ""
+    item_type: DashboardEntryType = DashboardEntryType.UPCOMING_EVENT
+    title: str = ""
+    subtitle: str = ""
+    date_or_time: Optional[datetime.datetime] = None
+    ref_id: str = ""
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+
+
+@dataclass
+class DashboardSummary:
+    family_context: FamilyContext
+    member_count: int = 0
+    upcoming_events: List[RichEventDetail] = field(default_factory=list)
+    due_reminders: List[ReminderConfig] = field(default_factory=list)
+    recent_memories: List[Memory] = field(default_factory=list)
+    active_notifications: List[Notification] = field(default_factory=list)
+    celebration_highlights: List[RichEventDetail] = field(default_factory=list)
+
 
 
 

@@ -13,8 +13,12 @@ from .models import (
     CalendarProjectionEntry,
     Confidence,
     Consent,
+    DashboardEntryType,
+    DashboardProjectionEntry,
+    DashboardSummary,
     DataExportResult,
     Event,
+    EventCategory,
     EventStatus,
     ExportValidationResult,
     FamilyContext,
@@ -41,6 +45,8 @@ from .models import (
     ReminderType,
     RepairClassification,
     RepairProposal,
+    RichEventDetail,
+    RichPersonDetail,
 
 
     SearchResultEntry,
@@ -334,6 +340,10 @@ class EventService:
         visibility: VisibilityLevel = VisibilityLevel.FAMILY,
         place_id: Optional[str] = None,
         recurrence_rule: Optional[RecurrenceRule] = None,
+        category: EventCategory = EventCategory.GENERAL,
+        target_person_ids: Optional[List[str]] = None,
+        milestone_year: Optional[int] = None,
+        milestone_anchor_date: Optional[datetime.date] = None,
     ) -> Event:
         context = self.canonical.get_family_context(family_context_id) if family_context_id else None
         if not self.auth.can_create_event(owner_id, context):
@@ -360,6 +370,10 @@ class EventService:
             end_time=end_time,
             visibility=visibility,
             recurrence_rule=recurrence_rule,
+            category=category,
+            target_person_ids=target_person_ids or [],
+            milestone_year=milestone_year,
+            milestone_anchor_date=milestone_anchor_date,
             provenance=provenance,
         )
         saved = self.canonical.add_event(event)
@@ -1199,6 +1213,271 @@ class SharingService:
         return share_link
 
 
+class DashboardService:
+    def __init__(
+        self,
+        canonical: CanonicalRepository,
+        derived: DerivedRepository,
+        auth: AuthorizationService,
+        calendar_service: Optional[CalendarService] = None,
+        event_service: Optional[EventService] = None,
+        memory_service: Optional[MemoryService] = None,
+        media_service: Optional[MediaService] = None,
+        reminder_service: Optional[ReminderService] = None,
+        notification_service: Optional[NotificationService] = None,
+    ) -> None:
+        self.canonical = canonical
+        self.derived = derived
+        self.auth = auth
+        self.calendar_service = calendar_service
+        self.event_service = event_service
+        self.memory_service = memory_service
+        self.media_service = media_service
+        self.reminder_service = reminder_service
+        self.notification_service = notification_service
+
+    def build_rich_event_detail(self, account_id: str, event_id: str) -> RichEventDetail:
+        event = self.canonical.get_event(event_id)
+        if event is None:
+            raise ValueError("Event does not exist")
+        context = self.canonical.get_family_context(event.family_context_id) if event.family_context_id else None
+        if not self.auth.can_view_event(account_id, event, context):
+            raise PermissionError("Account is not authorized to view this event")
+
+        place = None
+        if event.place_id:
+            p = self.canonical.get_place(event.place_id)
+            if p and self.auth.can_view_place(account_id, p, context):
+                place = p
+
+        memories = [m for m in self.canonical.list_memories() if m.event_id == event.id and self.auth.can_view_memory(account_id, m, context)]
+        media_items = [mi for mi in self.canonical.list_media_items() if mi.event_id == event.id and self.auth.can_view_media_item(account_id, mi, context)]
+        reminders = [r for r in self.canonical.list_reminders() if r.event_id == event.id]
+
+        target_persons = []
+        for pid in event.target_person_ids:
+            person = self.canonical.get_person(pid)
+            if person:
+                target_persons.append(person)
+
+        milestone_year = event.milestone_year
+        if milestone_year is None:
+            if event.milestone_anchor_date and event.start_time:
+                milestone_year = event.start_time.year - event.milestone_anchor_date.year
+            elif event.category in (EventCategory.BIRTHDAY, EventCategory.ANNIVERSARY, EventCategory.MILESTONE):
+                if target_persons and target_persons[0].birth_date and event.start_time:
+                    milestone_year = event.start_time.year - target_persons[0].birth_date.year
+
+        upcoming_occurrences: List[datetime.date] = []
+        if event.recurrence_rule:
+            start_date = event.start_time.date()
+            end_date = start_date + datetime.timedelta(days=365)
+            upcoming_occurrences = get_event_occurrences(event, start_date, end_date)
+
+        return RichEventDetail(
+            event=event,
+            place=place,
+            memories=memories,
+            media_items=media_items,
+            reminders=reminders,
+            target_persons=target_persons,
+            milestone_year=milestone_year,
+            upcoming_occurrences=upcoming_occurrences,
+        )
+
+    def build_rich_person_detail(self, account_id: str, person_id: str) -> RichPersonDetail:
+        person = self.canonical.get_person(person_id)
+        if person is None:
+            raise ValueError("Person does not exist")
+
+        account = None
+        for acc in self.canonical.list_accounts():
+            if acc.person_id == person_id:
+                account = acc
+                break
+
+        relationships = [
+            rel for rel in self.canonical.list_relationships()
+            if rel.source_person_id == person_id or rel.target_person_id == person_id
+        ]
+
+        context = None
+        for fc in self.canonical.list_family_contexts():
+            if account_id in fc.member_ids:
+                context = fc
+                break
+
+        events = [
+            ev for ev in self.canonical.list_events()
+            if (person_id in ev.target_person_ids or (account and ev.owner_id == account.id))
+            and self.auth.can_view_event(account_id, ev, context)
+        ]
+
+        memories = [
+            m for m in self.canonical.list_memories()
+            if m.subject_id == person_id and self.auth.can_view_memory(account_id, m, context)
+        ]
+
+        media_items = [
+            mi for mi in self.canonical.list_media_items()
+            if (account and mi.owner_id == account.id) and self.auth.can_view_media_item(account_id, mi, context)
+        ]
+
+        milestones = [
+            ev for ev in events
+            if ev.category in (EventCategory.MILESTONE, EventCategory.BIRTHDAY, EventCategory.ANNIVERSARY) or ev.milestone_year is not None
+        ]
+
+        return RichPersonDetail(
+            person=person,
+            account=account,
+            relationships=relationships,
+            events=events,
+            memories=memories,
+            media_items=media_items,
+            milestones=milestones,
+        )
+
+    def generate_dashboard_summary(self, account_id: str, family_context_id: str) -> DashboardSummary:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        member_count = len(context.member_ids)
+
+        visible_events = [
+            ev for ev in self.canonical.list_events()
+            if ev.family_context_id == family_context_id and self.auth.can_view_event(account_id, ev, context)
+        ]
+
+        upcoming_events = [self.build_rich_event_detail(account_id, ev.id) for ev in visible_events]
+
+        due_reminders = [
+            r for r in self.canonical.list_reminders()
+            if (r.family_context_id == family_context_id or r.created_by_id == account_id)
+        ]
+
+        recent_memories = [
+            m for m in self.canonical.list_memories()
+            if self.auth.can_view_memory(account_id, m, context)
+        ]
+
+        active_notifications = [
+            n for n in self.canonical.list_notifications()
+            if n.recipient_id == account_id and n.status == NotificationStatus.UNREAD
+        ]
+
+        celebration_highlights = [
+            detail for detail in upcoming_events
+            if detail.event.category in (EventCategory.BIRTHDAY, EventCategory.ANNIVERSARY, EventCategory.MILESTONE)
+        ]
+
+        return DashboardSummary(
+            family_context=context,
+            member_count=member_count,
+            upcoming_events=upcoming_events,
+            due_reminders=due_reminders,
+            recent_memories=recent_memories,
+            active_notifications=active_notifications,
+            celebration_highlights=celebration_highlights,
+        )
+
+    def project_dashboard_entries(self, account_id: str, family_context_id: str) -> List[DashboardProjectionEntry]:
+        summary = self.generate_dashboard_summary(account_id, family_context_id)
+        self.derived.clear_dashboard_entries(family_context_id)
+
+        projected: List[DashboardProjectionEntry] = []
+
+        for detail in summary.upcoming_events:
+            entry = DashboardProjectionEntry(
+                family_context_id=family_context_id,
+                item_type=DashboardEntryType.RECURRING_EVENT if detail.event.recurrence_rule else DashboardEntryType.UPCOMING_EVENT,
+                title=detail.event.title,
+                subtitle=detail.event.description,
+                date_or_time=detail.event.start_time,
+                ref_id=detail.event.id,
+                visibility=detail.event.visibility,
+            )
+            self.derived.add_dashboard_entry(entry)
+            projected.append(entry)
+
+        for rem in summary.due_reminders:
+            entry = DashboardProjectionEntry(
+                family_context_id=family_context_id,
+                item_type=DashboardEntryType.DUE_REMINDER,
+                title=f"Reminder: {rem.reminder_type.value if hasattr(rem.reminder_type, 'value') else str(rem.reminder_type)}",
+                subtitle=f"Offset {rem.offset_minutes} mins",
+                date_or_time=rem.created_at,
+                ref_id=rem.id,
+                visibility=VisibilityLevel.FAMILY,
+            )
+            self.derived.add_dashboard_entry(entry)
+            projected.append(entry)
+
+        for mem in summary.recent_memories:
+            entry = DashboardProjectionEntry(
+                family_context_id=family_context_id,
+                item_type=DashboardEntryType.RECENT_MEMORY,
+                title="Memory",
+                subtitle=mem.narrative,
+                date_or_time=mem.recorded_at,
+                ref_id=mem.id,
+                visibility=mem.visibility,
+            )
+            self.derived.add_dashboard_entry(entry)
+            projected.append(entry)
+
+        for notif in summary.active_notifications:
+            entry = DashboardProjectionEntry(
+                family_context_id=family_context_id,
+                item_type=DashboardEntryType.ACTIVE_NOTIFICATION,
+                title=notif.title,
+                subtitle=notif.message,
+                date_or_time=notif.created_at,
+                ref_id=notif.id,
+                visibility=notif.visibility,
+            )
+            self.derived.add_dashboard_entry(entry)
+            projected.append(entry)
+
+        for ch in summary.celebration_highlights:
+            entry = DashboardProjectionEntry(
+                family_context_id=family_context_id,
+                item_type=DashboardEntryType.CELEBRATION_HIGHLIGHT,
+                title=f"Celebration: {ch.event.title}",
+                subtitle=f"Category: {ch.event.category.value if hasattr(ch.event.category, 'value') else str(ch.event.category)}",
+                date_or_time=ch.event.start_time,
+                ref_id=ch.event.id,
+                visibility=ch.event.visibility,
+            )
+            self.derived.add_dashboard_entry(entry)
+            projected.append(entry)
+
+        return projected
+
+    def get_dashboard_projection(self, account_id: str, family_context_id: str) -> List[DashboardProjectionEntry]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        entries = self.derived.get_dashboard_entries(family_context_id)
+        if not entries:
+            entries = self.project_dashboard_entries(account_id, family_context_id)
+        return entries
+
+    def rebuild_dashboard_projections(self, family_context_id: str) -> None:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None or not context.member_ids:
+            self.derived.clear_dashboard_entries(family_context_id)
+            return
+        admin_id = context.member_ids[0]
+        self.project_dashboard_entries(admin_id, family_context_id)
+
+
 class DataPortabilityService:
     def __init__(self, canonical: CanonicalRepository, derived: DerivedRepository, auth: AuthorizationService) -> None:
         self.canonical = canonical
@@ -1668,12 +1947,14 @@ class VelGuardianService:
         auth: AuthorizationService,
         calendar_service: CalendarService,
         timeline_service: TimelineService,
+        dashboard_service: Optional[DashboardService] = None,
     ) -> None:
         self.canonical = canonical
         self.derived = derived
         self.auth = auth
         self.calendar_service = calendar_service
         self.timeline_service = timeline_service
+        self.dashboard_service = dashboard_service
 
     def run_integrity_audit(self, account_id: str, family_context_id: str) -> ValidationReport:
         context = self.canonical.get_family_context(family_context_id)
@@ -2047,6 +2328,8 @@ class VelGuardianService:
                 try:
                     self.calendar_service.rebuild_calendar_projection(proposal.family_context_id)
                     self.timeline_service.rebuild_timeline_projection()
+                    if hasattr(self, 'dashboard_service') and self.dashboard_service is not None:
+                        self.dashboard_service.rebuild_dashboard_projections(proposal.family_context_id)
                 except Exception as e:
                     # Atomicity: if rebuild fails, proposal state stays unchanged and is_executed remains False
                     raise RuntimeError(f"Derived projection rebuild failed: {str(e)}") from e

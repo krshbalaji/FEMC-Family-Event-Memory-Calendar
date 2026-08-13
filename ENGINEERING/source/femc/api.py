@@ -10,8 +10,12 @@ from .models import (
     AuditAnomaly,
     Confidence,
     ContextDiscoveryResult,
+    DashboardEntryType,
+    DashboardProjectionEntry,
+    DashboardSummary,
     DataExportResult,
     Event,
+    EventCategory,
     EventStatus,
     EventWithMemories,
     ExportValidationResult,
@@ -35,6 +39,8 @@ from .models import (
     ReminderType,
     RepairClassification,
     RepairProposal,
+    RichEventDetail,
+    RichPersonDetail,
     ShareLink,
     ShareResourceType,
     TimelineItemType,
@@ -48,6 +54,7 @@ from .repositories import CanonicalRepository, DerivedRepository
 from .services import (
     AuthorizationService,
     CalendarService,
+    DashboardService,
     DataPortabilityService,
     EventService,
     IdentityService,
@@ -79,9 +86,20 @@ class FEMCApi:
         self.notification = NotificationService(self.canonical, self.authorization)
         self.reminder = ReminderService(self.canonical, self.authorization, self.notification)
         self.sharing = SharingService(self.canonical, self.authorization)
+        self.dashboard = DashboardService(
+            self.canonical,
+            self.derived,
+            self.authorization,
+            self.calendar,
+            self.event,
+            self.memory,
+            self.media,
+            self.reminder,
+            self.notification,
+        )
         self.data_portability = DataPortabilityService(self.canonical, self.derived, self.authorization)
         self.mayil = MayilService(self.canonical, self.derived, self.authorization, self.event)
-        self.guardian = VelGuardianService(self.canonical, self.derived, self.authorization, self.calendar, self.timeline)
+        self.guardian = VelGuardianService(self.canonical, self.derived, self.authorization, self.calendar, self.timeline, self.dashboard)
         self.search = SearchService(self.derived)
 
 
@@ -118,6 +136,10 @@ class FEMCApi:
         visibility: VisibilityLevel = VisibilityLevel.FAMILY,
         place_id: Optional[str] = None,
         recurrence_rule: Optional[RecurrenceRule] = None,
+        category: EventCategory = EventCategory.GENERAL,
+        target_person_ids: Optional[List[str]] = None,
+        milestone_year: Optional[int] = None,
+        milestone_anchor_date: Optional[datetime.date] = None,
     ) -> Event:
         session = self._validate_session(session_id)
         return self.event.create_event(
@@ -130,7 +152,31 @@ class FEMCApi:
             visibility=visibility,
             place_id=place_id,
             recurrence_rule=recurrence_rule,
+            category=category,
+            target_person_ids=target_person_ids,
+            milestone_year=milestone_year,
+            milestone_anchor_date=milestone_anchor_date,
         )
+
+    def build_rich_event_detail_for_session(self, session_id: str, event_id: str) -> RichEventDetail:
+        session = self._validate_session(session_id)
+        return self.dashboard.build_rich_event_detail(session.account_id, event_id)
+
+    def build_rich_person_detail_for_session(self, session_id: str, person_id: str) -> RichPersonDetail:
+        session = self._validate_session(session_id)
+        return self.dashboard.build_rich_person_detail(session.account_id, person_id)
+
+    def get_dashboard_summary_for_session(self, session_id: str, family_context_id: str) -> DashboardSummary:
+        session = self._validate_session(session_id)
+        return self.dashboard.generate_dashboard_summary(session.account_id, family_context_id)
+
+    def project_dashboard_entries_for_session(self, session_id: str, family_context_id: str) -> List[DashboardProjectionEntry]:
+        session = self._validate_session(session_id)
+        return self.dashboard.project_dashboard_entries(session.account_id, family_context_id)
+
+    def get_dashboard_projection_for_session(self, session_id: str, family_context_id: str) -> List[DashboardProjectionEntry]:
+        session = self._validate_session(session_id)
+        return self.dashboard.get_dashboard_projection(session.account_id, family_context_id)
 
     def configure_reminder_for_session(
         self,

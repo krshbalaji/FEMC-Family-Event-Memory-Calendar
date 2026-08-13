@@ -1,5 +1,5 @@
 from .api import FEMCApi
-from .services import AuthorizationService, IdentityService, EventService, CalendarService, MemoryService, SearchService
+from .services import AuthorizationService, IdentityService, EventService, CalendarService, MemoryService, SearchService, DashboardService
 from .repositories import CanonicalRepository, DerivedRepository
 from .models import (
     Person,
@@ -13,6 +13,12 @@ from .models import (
     ProvenanceMetadata,
     VisibilityLevel,
     EventStatus,
+    EventCategory,
+    DashboardEntryType,
+    RichEventDetail,
+    RichPersonDetail,
+    DashboardProjectionEntry,
+    DashboardSummary,
     RelationshipType,
     Confidence,
     ProvenanceSourceType,
@@ -28,6 +34,7 @@ __all__ = [
     "CalendarService",
     "MemoryService",
     "SearchService",
+    "DashboardService",
     "CanonicalRepository",
     "DerivedRepository",
     "Person",
@@ -41,6 +48,12 @@ __all__ = [
     "ProvenanceMetadata",
     "VisibilityLevel",
     "EventStatus",
+    "EventCategory",
+    "DashboardEntryType",
+    "RichEventDetail",
+    "RichPersonDetail",
+    "DashboardProjectionEntry",
+    "DashboardSummary",
     "RelationshipType",
     "Confidence",
     "ProvenanceSourceType",
