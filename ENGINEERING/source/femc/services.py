@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 from typing import List, Optional
 
 from .models import (
@@ -11,6 +12,8 @@ from .models import (
     AuditAnomaly,
     AuthenticatedSession,
     CalendarProjectionEntry,
+    CelebrationArtifact,
+    CelebrationArtifactType,
     Confidence,
     Consent,
     DashboardEntryType,
@@ -1478,6 +1481,273 @@ class DashboardService:
         self.project_dashboard_entries(admin_id, family_context_id)
 
 
+class CelebrationStudioService:
+    def __init__(
+        self,
+        canonical: CanonicalRepository,
+        derived: DerivedRepository,
+        auth: AuthorizationService,
+        media_service: Optional[MediaService] = None,
+    ) -> None:
+        self.canonical = canonical
+        self.derived = derived
+        self.auth = auth
+        self.media_service = media_service
+
+    def build_celebration_artifact_for_event(
+        self,
+        account_id: str,
+        event_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        event = self.canonical.get_event(event_id)
+        if event is None:
+            raise ValueError("Event does not exist")
+        context = self.canonical.get_family_context(event.family_context_id) if event.family_context_id else None
+        if not self.auth.can_view_event(account_id, event, context):
+            raise PermissionError("Account is not authorized to view this event")
+
+        if event.category == EventCategory.BIRTHDAY:
+            artifact_type = CelebrationArtifactType.BIRTHDAY_CARD
+            title_prefix = "Birthday Celebration"
+        elif event.category == EventCategory.ANNIVERSARY:
+            artifact_type = CelebrationArtifactType.ANNIVERSARY_CARD
+            title_prefix = "Anniversary Celebration"
+        elif event.category == EventCategory.MILESTONE:
+            artifact_type = CelebrationArtifactType.MILESTONE_CARD
+            title_prefix = "Milestone Celebration"
+        else:
+            artifact_type = CelebrationArtifactType.EVENT_HIGHLIGHT
+            title_prefix = "Event Highlight"
+
+        target_names = []
+        for pid in event.target_person_ids:
+            p = self.canonical.get_person(pid)
+            if p:
+                target_names.append(p.name)
+        target_str = f" for {', '.join(target_names)}" if target_names else ""
+        milestone_str = f" ({event.milestone_year} Years)" if event.milestone_year is not None else ""
+
+        title = f"{title_prefix}: {event.title}{milestone_str}"
+        subtitle = f"{event.description}{target_str}".strip()
+        rendered_content = f"[Celebration Card] {title} | {subtitle} | Date: {event.start_time.isoformat()}"
+        content_hash = hashlib.sha256(rendered_content.encode("utf-8")).hexdigest()
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="celebration-studio",
+            created_by_id=account_id,
+            audit_trail=["celebration-artifact-generated"],
+        )
+
+        media_item_id = None
+        if attach_as_media and self.media_service is not None:
+            media_item = self.media_service.create_media_item(
+                owner_id=account_id,
+                uri=f"celebration://artifacts/{event.id}",
+                media_type=MediaType.PHOTO,
+                caption=title,
+                family_context_id=event.family_context_id,
+                event_id=event.id,
+                visibility=event.visibility,
+            )
+            media_item_id = media_item.id
+
+        artifact = CelebrationArtifact(
+            artifact_type=artifact_type,
+            title=title,
+            subtitle=subtitle,
+            rendered_content=rendered_content,
+            content_hash=content_hash,
+            family_context_id=event.family_context_id or "",
+            source_event_id=event.id,
+            source_person_id=event.target_person_ids[0] if event.target_person_ids else None,
+            media_item_id=media_item_id,
+            visibility=event.visibility,
+            provenance=provenance,
+        )
+
+        return self.derived.add_celebration_artifact(artifact)
+
+    def build_celebration_artifact_for_person(
+        self,
+        account_id: str,
+        person_id: str,
+        family_context_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        person = self.canonical.get_person(person_id)
+        if person is None:
+            raise ValueError("Person does not exist")
+
+        title = f"Person Celebration: {person.name}"
+        birth_str = f"Born on {person.birth_date.isoformat()}" if person.birth_date else "Special Person"
+        subtitle = f"Honoring {person.name} ({birth_str})"
+        rendered_content = f"[Person Card] {title} | {subtitle}"
+        content_hash = hashlib.sha256(rendered_content.encode("utf-8")).hexdigest()
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="celebration-studio",
+            created_by_id=account_id,
+            audit_trail=["person-celebration-artifact-generated"],
+        )
+
+        media_item_id = None
+        if attach_as_media and self.media_service is not None:
+            media_item = self.media_service.create_media_item(
+                owner_id=account_id,
+                uri=f"celebration://artifacts/person-{person.id}",
+                media_type=MediaType.PHOTO,
+                caption=title,
+                family_context_id=family_context_id,
+                visibility=VisibilityLevel.FAMILY,
+            )
+            media_item_id = media_item.id
+
+        artifact = CelebrationArtifact(
+            artifact_type=CelebrationArtifactType.BIRTHDAY_CARD if person.birth_date else CelebrationArtifactType.EVENT_HIGHLIGHT,
+            title=title,
+            subtitle=subtitle,
+            rendered_content=rendered_content,
+            content_hash=content_hash,
+            family_context_id=family_context_id,
+            source_person_id=person.id,
+            media_item_id=media_item_id,
+            visibility=VisibilityLevel.FAMILY,
+            provenance=provenance,
+        )
+
+        return self.derived.add_celebration_artifact(artifact)
+
+    def build_celebration_artifact_for_memory(
+        self,
+        account_id: str,
+        memory_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        memory = self.canonical.get_memory(memory_id)
+        if memory is None:
+            raise ValueError("Memory does not exist")
+
+        context = None
+        if memory.event_id:
+            ev = self.canonical.get_event(memory.event_id)
+            if ev and ev.family_context_id:
+                context = self.canonical.get_family_context(ev.family_context_id)
+        if context is None:
+            for fc in self.canonical.list_family_contexts():
+                if memory.subject_id in fc.member_ids:
+                    context = fc
+                    break
+
+        if not self.auth.can_view_memory(account_id, memory, context):
+            raise PermissionError("Account is not authorized to view this memory")
+
+        title = "Memory Keepsake"
+        subtitle = memory.narrative[:50] + "..." if len(memory.narrative) > 50 else memory.narrative
+        rendered_content = f"[Family Memory Card] {title} | Narrative: {memory.narrative}"
+        content_hash = hashlib.sha256(rendered_content.encode("utf-8")).hexdigest()
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="celebration-studio",
+            created_by_id=account_id,
+            audit_trail=["memory-celebration-artifact-generated"],
+        )
+
+        fc_id = context.id if context else ""
+        media_item_id = None
+        if attach_as_media and self.media_service is not None:
+            media_item = self.media_service.create_media_item(
+                owner_id=account_id,
+                uri=f"celebration://artifacts/memory-{memory.id}",
+                media_type=MediaType.PHOTO,
+                caption=title,
+                family_context_id=fc_id if fc_id else None,
+                memory_id=memory.id,
+                visibility=memory.visibility,
+            )
+            media_item_id = media_item.id
+
+        artifact = CelebrationArtifact(
+            artifact_type=CelebrationArtifactType.FAMILY_MEMORY_CARD,
+            title=title,
+            subtitle=subtitle,
+            rendered_content=rendered_content,
+            content_hash=content_hash,
+            family_context_id=fc_id,
+            source_memory_id=memory.id,
+            source_event_id=memory.event_id,
+            media_item_id=media_item_id,
+            visibility=memory.visibility,
+            provenance=provenance,
+        )
+
+        return self.derived.add_celebration_artifact(artifact)
+
+    def get_celebration_artifact_for_account(
+        self,
+        artifact_id: str,
+        account_id: str,
+    ) -> Optional[CelebrationArtifact]:
+        artifact = self.derived.get_celebration_artifact_by_id(artifact_id)
+        if artifact is None:
+            return None
+        context = self.canonical.get_family_context(artifact.family_context_id) if artifact.family_context_id else None
+
+        if artifact.visibility == VisibilityLevel.PRIVATE:
+            if artifact.provenance and artifact.provenance.created_by_id != account_id:
+                raise PermissionError("Account is not authorized to view private celebration artifact")
+        elif context and account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized to view celebration artifacts for this context")
+
+        return artifact
+
+    def list_celebration_artifacts_for_context_for_account(
+        self,
+        family_context_id: str,
+        account_id: str,
+    ) -> List[CelebrationArtifact]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        artifacts = self.derived.get_celebration_artifacts(family_context_id)
+        authorized: List[CelebrationArtifact] = []
+        for art in artifacts:
+            if art.visibility == VisibilityLevel.PRIVATE:
+                if art.provenance and art.provenance.created_by_id == account_id:
+                    authorized.append(art)
+            else:
+                authorized.append(art)
+        return authorized
+
+    def rebuild_celebration_artifacts(self, family_context_id: str) -> List[CelebrationArtifact]:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            return []
+
+        self.derived.clear_celebration_artifacts(family_context_id)
+
+        rebuilt = []
+        for ev in self.canonical.list_events():
+            if ev.family_context_id == family_context_id:
+                if ev.category in (EventCategory.BIRTHDAY, EventCategory.ANNIVERSARY, EventCategory.MILESTONE):
+                    created_by = ev.provenance.created_by_id if ev.provenance else ev.owner_id
+                    art = self.build_celebration_artifact_for_event(created_by, ev.id, attach_as_media=False)
+                    rebuilt.append(art)
+        return rebuilt
+
+
 class DataPortabilityService:
     def __init__(self, canonical: CanonicalRepository, derived: DerivedRepository, auth: AuthorizationService) -> None:
         self.canonical = canonical
@@ -1938,6 +2208,44 @@ class MayilService:
 
         return proposal
 
+    def propose_celebration_artifact_recommendation(
+        self,
+        account_id: str,
+        family_context_id: str,
+        event_id: str,
+        reasoning: str = "Upcoming landmark celebration event detected",
+    ) -> ActionProposal:
+        context = self.canonical.get_family_context(family_context_id)
+        if context is None:
+            raise ValueError("Family context does not exist")
+        if account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+
+        event = self.canonical.get_event(event_id)
+        if event is None or event.family_context_id != family_context_id:
+            raise ValueError("Referenced event does not exist in context")
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="mayil-ai-engine",
+            created_by_id=account_id,
+            audit_trail=["mayil-celebration-proposal-generated"],
+        )
+
+        proposal = ActionProposal(
+            proposal_type=ProposalType.EVENT_RECOMMENDATION,
+            title=f"Celebration Artifact Proposal for {event.title}",
+            reasoning=reasoning,
+            proposed_changes={"action": "build_celebration_artifact", "event_id": event_id},
+            confidence=Confidence.HIGH,
+            family_context_id=family_context_id,
+            target_account_id=account_id,
+            status=ProposalStatus.PROPOSED,
+            provenance=provenance,
+        )
+
+        return self.canonical.add_action_proposal(proposal)
+
 
 class VelGuardianService:
     def __init__(
@@ -1948,6 +2256,7 @@ class VelGuardianService:
         calendar_service: CalendarService,
         timeline_service: TimelineService,
         dashboard_service: Optional[DashboardService] = None,
+        celebration_studio_service: Optional[CelebrationStudioService] = None,
     ) -> None:
         self.canonical = canonical
         self.derived = derived
@@ -1955,6 +2264,7 @@ class VelGuardianService:
         self.calendar_service = calendar_service
         self.timeline_service = timeline_service
         self.dashboard_service = dashboard_service
+        self.celebration_studio_service = celebration_studio_service
 
     def run_integrity_audit(self, account_id: str, family_context_id: str) -> ValidationReport:
         context = self.canonical.get_family_context(family_context_id)
@@ -2243,6 +2553,18 @@ class VelGuardianService:
                 ))
 
 
+        for art in self.derived.get_celebration_artifacts(family_context_id):
+            if art.source_event_id and art.source_event_id not in all_event_ids:
+                prop = self._create_repair_proposal("rebuild_derived_projections", "CelebrationArtifact", art.id, family_context_id, classification=RepairClassification.DERIVED_ONLY)
+                anomalies.append(AuditAnomaly(
+                    anomaly_type=AnomalyType.DANGLING_REFERENCE,
+                    severity=AnomalySeverity.WARNING,
+                    description=f"CelebrationArtifact '{art.id}' references non-existent source_event_id '{art.source_event_id}'",
+                    affected_entity_id=art.id,
+                    family_context_id=family_context_id,
+                    repair_proposal=prop,
+                ))
+
         is_valid = len(anomalies) == 0
         return ValidationReport(
             is_valid=is_valid,
@@ -2330,6 +2652,8 @@ class VelGuardianService:
                     self.timeline_service.rebuild_timeline_projection()
                     if hasattr(self, 'dashboard_service') and self.dashboard_service is not None:
                         self.dashboard_service.rebuild_dashboard_projections(proposal.family_context_id)
+                    if hasattr(self, 'celebration_studio_service') and self.celebration_studio_service is not None:
+                        self.celebration_studio_service.rebuild_celebration_artifacts(proposal.family_context_id)
                 except Exception as e:
                     # Atomicity: if rebuild fails, proposal state stays unchanged and is_executed remains False
                     raise RuntimeError(f"Derived projection rebuild failed: {str(e)}") from e

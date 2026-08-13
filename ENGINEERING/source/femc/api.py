@@ -8,6 +8,8 @@ from .models import (
     AnomalySeverity,
     AnomalyType,
     AuditAnomaly,
+    CelebrationArtifact,
+    CelebrationArtifactType,
     Confidence,
     ContextDiscoveryResult,
     DashboardEntryType,
@@ -54,6 +56,7 @@ from .repositories import CanonicalRepository, DerivedRepository
 from .services import (
     AuthorizationService,
     CalendarService,
+    CelebrationStudioService,
     DashboardService,
     DataPortabilityService,
     EventService,
@@ -97,9 +100,18 @@ class FEMCApi:
             self.reminder,
             self.notification,
         )
+        self.celebration_studio = CelebrationStudioService(self.canonical, self.derived, self.authorization, self.media)
         self.data_portability = DataPortabilityService(self.canonical, self.derived, self.authorization)
         self.mayil = MayilService(self.canonical, self.derived, self.authorization, self.event)
-        self.guardian = VelGuardianService(self.canonical, self.derived, self.authorization, self.calendar, self.timeline, self.dashboard)
+        self.guardian = VelGuardianService(
+            self.canonical,
+            self.derived,
+            self.authorization,
+            self.calendar,
+            self.timeline,
+            self.dashboard,
+            celebration_studio_service=self.celebration_studio,
+        )
         self.search = SearchService(self.derived)
 
 
@@ -546,10 +558,51 @@ class FEMCApi:
         session = self._validate_session(session_id)
         return self.guardian.execute_repair_proposal(session.account_id, proposal_id)
 
+    def build_celebration_artifact_for_event_for_session(
+        self,
+        session_id: str,
+        event_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        session = self._validate_session(session_id)
+        return self.celebration_studio.build_celebration_artifact_for_event(
+            session.account_id,
+            event_id,
+            attach_as_media=attach_as_media,
+        )
 
+    def build_celebration_artifact_for_person_for_session(
+        self,
+        session_id: str,
+        person_id: str,
+        family_context_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        session = self._validate_session(session_id)
+        return self.celebration_studio.build_celebration_artifact_for_person(
+            session.account_id,
+            person_id,
+            family_context_id,
+            attach_as_media=attach_as_media,
+        )
 
+    def build_celebration_artifact_for_memory_for_session(
+        self,
+        session_id: str,
+        memory_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        session = self._validate_session(session_id)
+        return self.celebration_studio.build_celebration_artifact_for_memory(
+            session.account_id,
+            memory_id,
+            attach_as_media=attach_as_media,
+        )
 
+    def get_celebration_artifact_for_session(self, session_id: str, artifact_id: str) -> Optional[CelebrationArtifact]:
+        session = self._validate_session(session_id)
+        return self.celebration_studio.get_celebration_artifact_for_account(artifact_id, session.account_id)
 
-
-
-
+    def list_celebration_artifacts_for_session(self, session_id: str, family_context_id: str) -> List[CelebrationArtifact]:
+        session = self._validate_session(session_id)
+        return self.celebration_studio.list_celebration_artifacts_for_context_for_account(family_context_id, session.account_id)

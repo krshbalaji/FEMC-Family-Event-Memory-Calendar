@@ -8,6 +8,7 @@ from .models import (
     ActionProposal,
     AuthenticatedSession,
     CalendarProjectionEntry,
+    CelebrationArtifact,
     DashboardProjectionEntry,
     Event,
 
@@ -248,6 +249,28 @@ class DerivedRepository:
         self.search_entries: List[SearchResultEntry] = []
         self.timeline_entries: List[TimelineProjectionEntry] = []
         self.dashboard_entries: List[DashboardProjectionEntry] = []
+        self.celebration_artifacts: List[CelebrationArtifact] = []
+
+    def add_celebration_artifact(self, artifact: CelebrationArtifact) -> CelebrationArtifact:
+        self.celebration_artifacts.append(artifact)
+        return artifact
+
+    def get_celebration_artifacts(self, family_context_id: Optional[str] = None) -> List[CelebrationArtifact]:
+        if family_context_id is None:
+            return list(self.celebration_artifacts)
+        return [a for a in self.celebration_artifacts if a.family_context_id == family_context_id]
+
+    def get_celebration_artifact_by_id(self, artifact_id: str) -> Optional[CelebrationArtifact]:
+        for a in self.celebration_artifacts:
+            if a.id == artifact_id:
+                return a
+        return None
+
+    def clear_celebration_artifacts(self, family_context_id: Optional[str] = None) -> None:
+        if family_context_id is None:
+            self.celebration_artifacts.clear()
+        else:
+            self.celebration_artifacts = [a for a in self.celebration_artifacts if a.family_context_id != family_context_id]
 
     def add_dashboard_entry(self, entry: DashboardProjectionEntry) -> DashboardProjectionEntry:
         self.dashboard_entries.append(entry)

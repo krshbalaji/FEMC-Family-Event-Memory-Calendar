@@ -41,6 +41,15 @@ class DashboardEntryType(str, enum.Enum):
     CELEBRATION_HIGHLIGHT = "celebration_highlight"
 
 
+class CelebrationArtifactType(str, enum.Enum):
+    BIRTHDAY_CARD = "birthday_card"
+    ANNIVERSARY_CARD = "anniversary_card"
+    MILESTONE_CARD = "milestone_card"
+    FAMILY_MEMORY_CARD = "family_memory_card"
+    EVENT_HIGHLIGHT = "event_highlight"
+    CELEBRATION_ALBUM = "celebration_album"
+
+
 
 
 class MediaType(str, enum.Enum):
@@ -310,6 +319,24 @@ class DashboardSummary:
     recent_memories: List[Memory] = field(default_factory=list)
     active_notifications: List[Notification] = field(default_factory=list)
     celebration_highlights: List[RichEventDetail] = field(default_factory=list)
+
+
+@dataclass
+class CelebrationArtifact:
+    id: str = field(default_factory=_new_id)
+    artifact_type: CelebrationArtifactType = CelebrationArtifactType.EVENT_HIGHLIGHT
+    title: str = ""
+    subtitle: str = ""
+    rendered_content: str = ""
+    content_hash: str = ""
+    family_context_id: str = ""
+    source_event_id: Optional[str] = None
+    source_person_id: Optional[str] = None
+    source_memory_id: Optional[str] = None
+    media_item_id: Optional[str] = None
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+    provenance: Optional[ProvenanceMetadata] = None
+    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
 
 
 
