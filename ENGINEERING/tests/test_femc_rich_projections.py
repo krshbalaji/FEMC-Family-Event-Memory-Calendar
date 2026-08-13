@@ -213,6 +213,20 @@ def test_build_rich_person_detail_basic():
         target_person_ids=[p1.id],
     )
 
+    memory = api.create_memory_for_session(
+        session_id=s1.session_id,
+        event_id=event.id,
+        narrative="Memory for person event",
+    )
+
+    media_item = api.media.create_media_item(
+        owner_id=acc1.id,
+        uri="http://example.com/photo.jpg",
+        caption="Photo of person event",
+        event_id=event.id,
+        family_context_id=fc.id,
+    )
+
     detail = api.build_rich_person_detail_for_session(s1.session_id, p1.id)
     assert isinstance(detail, RichPersonDetail)
     assert detail.person.id == p1.id
@@ -220,6 +234,8 @@ def test_build_rich_person_detail_basic():
     assert len(detail.relationships) >= 1
     assert len(detail.events) >= 1
     assert len(detail.milestones) == 1
+    assert len(detail.memories) >= 1
+    assert len(detail.media_items) >= 1
 
 
 def test_build_rich_person_detail_unauthorized():
@@ -433,3 +449,48 @@ def test_vel_guardian_derived_dashboard_repair():
     assert executed.is_executed is True
     rebuilt = api.derived.get_dashboard_entries(fc.id)
     assert len(rebuilt) >= 1
+
+
+def test_dashboard_reminder_privacy_semantics():
+    api, acc1, acc2, p1, p2, fc, s1, s2 = _setup_baseline_context()
+    now = datetime.datetime.utcnow()
+
+    priv_event = api.create_event_for_session(
+        session_id=s1.session_id,
+        title="Private Doctor Visit",
+        description="Confidential",
+        family_context_id=fc.id,
+        start_time=now,
+        end_time=now + datetime.timedelta(hours=1),
+        visibility=VisibilityLevel.PRIVATE,
+    )
+    rem_priv = api.reminder.create_reminder(
+        created_by_id=acc1.id,
+        event_id=priv_event.id,
+        reminder_type=ReminderType.EVENT_START,
+    )
+
+    fam_event = api.create_event_for_session(
+        session_id=s1.session_id,
+        title="Family Dinner",
+        description="Shared dinner",
+        family_context_id=fc.id,
+        start_time=now,
+        end_time=now + datetime.timedelta(hours=2),
+        visibility=VisibilityLevel.FAMILY,
+    )
+    rem_fam = api.reminder.create_reminder(
+        created_by_id=acc1.id,
+        event_id=fam_event.id,
+        reminder_type=ReminderType.EVENT_START,
+    )
+
+    sum1 = api.dashboard.generate_dashboard_summary(acc1.id, fc.id)
+    rem_ids_1 = [r.id for r in sum1.due_reminders]
+    assert rem_priv.id in rem_ids_1
+    assert rem_fam.id in rem_ids_1
+
+    sum2 = api.dashboard.generate_dashboard_summary(acc2.id, fc.id)
+    rem_ids_2 = [r.id for r in sum2.due_reminders]
+    assert rem_priv.id not in rem_ids_2
+    assert rem_fam.id in rem_ids_2

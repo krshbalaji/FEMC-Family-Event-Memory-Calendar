@@ -47,6 +47,7 @@ from .models import (
     ShareResourceType,
     TimelineItemType,
     TimelineProjectionEntry,
+    _utc_now,
     ValidationReport,
     VisibilityLevel,
 )
@@ -129,7 +130,7 @@ class FEMCApi:
         session = self.canonical.get_session(session_id)
         if session is None:
             raise PermissionError("Invalid session")
-        if session.expires_at is not None and session.expires_at < datetime.datetime.utcnow():
+        if session.expires_at is not None and session.expires_at < _utc_now():
             raise PermissionError("Session expired")
         return session
 
@@ -596,6 +597,19 @@ class FEMCApi:
         return self.celebration_studio.build_celebration_artifact_for_memory(
             session.account_id,
             memory_id,
+            attach_as_media=attach_as_media,
+        )
+
+    def build_celebration_album_artifact_for_session(
+        self,
+        session_id: str,
+        album_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        session = self._validate_session(session_id)
+        return self.celebration_studio.build_celebration_album_artifact(
+            session.account_id,
+            album_id,
             attach_as_media=attach_as_media,
         )
 

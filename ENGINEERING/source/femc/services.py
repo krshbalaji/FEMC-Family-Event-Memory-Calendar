@@ -52,6 +52,7 @@ from .models import (
     RichPersonDetail,
 
 
+    _utc_now,
     SearchResultEntry,
     ShareLink,
     ShareResourceType,
@@ -195,7 +196,7 @@ class IdentityService:
 
     def create_session(self, account_id: str, duration_minutes: int = 60) -> AuthenticatedSession:
         session = AuthenticatedSession(
-            account_id=account_id, expires_at=datetime.datetime.utcnow() + datetime.timedelta(minutes=duration_minutes)
+            account_id=account_id, expires_at=_utc_now() + datetime.timedelta(minutes=duration_minutes)
         )
         return self.canonical.add_session(session)
 
@@ -1045,7 +1046,7 @@ class ReminderService:
             raise PermissionError("Account is not authorized for this family context")
 
         if current_time is None:
-            current_time = datetime.datetime.utcnow()
+            current_time = _utc_now()
 
         triggered_notifications: List[Notification] = []
 
@@ -1154,7 +1155,7 @@ class SharingService:
 
         expires_at = None
         if expires_in_minutes is not None and expires_in_minutes > 0:
-            expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=expires_in_minutes)
+            expires_at = _utc_now() + datetime.timedelta(minutes=expires_in_minutes)
 
         provenance = ProvenanceMetadata(
             source_type=ProvenanceSourceType.USER,
@@ -1180,7 +1181,7 @@ class SharingService:
             raise ValueError("Share link not found")
         if share_link.is_revoked:
             raise PermissionError("Share link has been revoked")
-        if share_link.expires_at is not None and share_link.expires_at < datetime.datetime.utcnow():
+        if share_link.expires_at is not None and share_link.expires_at < _utc_now():
             raise PermissionError("Share link has expired")
 
         if share_link.resource_type == ShareResourceType.EVENT:
@@ -1316,14 +1317,19 @@ class DashboardService:
             and self.auth.can_view_event(account_id, ev, context)
         ]
 
+        event_ids = {ev.id for ev in events}
+
         memories = [
             m for m in self.canonical.list_memories()
-            if m.subject_id == person_id and self.auth.can_view_memory(account_id, m, context)
+            if (m.subject_id == person_id or (account and m.subject_id == account.id) or (m.event_id and m.event_id in event_ids))
+            and self.auth.can_view_memory(account_id, m, context)
         ]
+        memory_ids = {m.id for m in memories}
 
         media_items = [
             mi for mi in self.canonical.list_media_items()
-            if (account and mi.owner_id == account.id) and self.auth.can_view_media_item(account_id, mi, context)
+            if ((account and mi.owner_id == account.id) or (mi.event_id and mi.event_id in event_ids) or (mi.memory_id and mi.memory_id in memory_ids))
+            and self.auth.can_view_media_item(account_id, mi, context)
         ]
 
         milestones = [
@@ -1357,10 +1363,14 @@ class DashboardService:
 
         upcoming_events = [self.build_rich_event_detail(account_id, ev.id) for ev in visible_events]
 
-        due_reminders = [
-            r for r in self.canonical.list_reminders()
-            if (r.family_context_id == family_context_id or r.created_by_id == account_id)
-        ]
+        due_reminders = []
+        for r in self.canonical.list_reminders():
+            if r.family_context_id == family_context_id or r.created_by_id == account_id:
+                if r.event_id:
+                    event = self.canonical.get_event(r.event_id)
+                    if event is None or not self.auth.can_view_event(account_id, event, context):
+                        continue
+                due_reminders.append(r)
 
         recent_memories = [
             m for m in self.canonical.list_memories()
@@ -1407,6 +1417,11 @@ class DashboardService:
             projected.append(entry)
 
         for rem in summary.due_reminders:
+            rem_vis = VisibilityLevel.FAMILY
+            if rem.event_id:
+                event = self.canonical.get_event(rem.event_id)
+                if event:
+                    rem_vis = event.visibility
             entry = DashboardProjectionEntry(
                 family_context_id=family_context_id,
                 item_type=DashboardEntryType.DUE_REMINDER,
@@ -1414,7 +1429,7 @@ class DashboardService:
                 subtitle=f"Offset {rem.offset_minutes} mins",
                 date_or_time=rem.created_at,
                 ref_id=rem.id,
-                visibility=VisibilityLevel.FAMILY,
+                visibility=rem_vis,
             )
             self.derived.add_dashboard_entry(entry)
             projected.append(entry)
@@ -1470,7 +1485,35 @@ class DashboardService:
         entries = self.derived.get_dashboard_entries(family_context_id)
         if not entries:
             entries = self.project_dashboard_entries(account_id, family_context_id)
-        return entries
+
+        authorized_entries = []
+        for entry in entries:
+            if entry.visibility == VisibilityLevel.PRIVATE:
+                if entry.ref_id:
+                    if entry.item_type in (DashboardEntryType.UPCOMING_EVENT, DashboardEntryType.RECURRING_EVENT, DashboardEntryType.CELEBRATION_HIGHLIGHT):
+                        ev = self.canonical.get_event(entry.ref_id)
+                        if ev and self.auth.can_view_event(account_id, ev, context):
+                            authorized_entries.append(entry)
+                    elif entry.item_type == DashboardEntryType.DUE_REMINDER:
+                        rem = self.canonical.get_reminder(entry.ref_id)
+                        if rem:
+                            if rem.event_id:
+                                ev = self.canonical.get_event(rem.event_id)
+                                if ev and self.auth.can_view_event(account_id, ev, context):
+                                    authorized_entries.append(entry)
+                            elif rem.created_by_id == account_id:
+                                authorized_entries.append(entry)
+                    elif entry.item_type == DashboardEntryType.RECENT_MEMORY:
+                        mem = self.canonical.get_memory(entry.ref_id)
+                        if mem and self.auth.can_view_memory(account_id, mem, context):
+                            authorized_entries.append(entry)
+                    elif entry.item_type == DashboardEntryType.ACTIVE_NOTIFICATION:
+                        notif = self.canonical.get_notification(entry.ref_id)
+                        if notif and notif.recipient_id == account_id:
+                            authorized_entries.append(entry)
+            else:
+                authorized_entries.append(entry)
+        return authorized_entries
 
     def rebuild_dashboard_projections(self, family_context_id: str) -> None:
         context = self.canonical.get_family_context(family_context_id)
@@ -1586,6 +1629,15 @@ class CelebrationStudioService:
         if person is None:
             raise ValueError("Person does not exist")
 
+        authorized_person_ids = set()
+        for m_id in context.member_ids:
+            acc = self.canonical.get_account(m_id)
+            if acc and acc.person_id:
+                authorized_person_ids.add(acc.person_id)
+
+        if person_id not in authorized_person_ids:
+            raise PermissionError("Requested person is not an authorized person in this family context")
+
         title = f"Person Celebration: {person.name}"
         birth_str = f"Born on {person.birth_date.isoformat()}" if person.birth_date else "Special Person"
         subtitle = f"Honoring {person.name} ({birth_str})"
@@ -1692,6 +1744,48 @@ class CelebrationStudioService:
 
         return self.derived.add_celebration_artifact(artifact)
 
+    def build_celebration_album_artifact(
+        self,
+        account_id: str,
+        album_id: str,
+        attach_as_media: bool = False,
+    ) -> CelebrationArtifact:
+        album = self.canonical.get_media_album(album_id)
+        if album is None:
+            raise ValueError("Media album does not exist")
+
+        fc_id = album.family_context_id or ""
+        context = self.canonical.get_family_context(fc_id) if fc_id else None
+        if context and account_id not in context.member_ids:
+            raise PermissionError("Account is not authorized for this family context")
+        if not self.auth.can_view_media_album(account_id, album, context):
+            raise PermissionError("Account is not authorized to view this media album")
+
+        title = f"Celebration Album: {album.title}"
+        subtitle = f"Album featuring {len(album.media_ids)} media item(s)"
+        rendered_content = f"[Celebration Album] {title} | {subtitle}"
+        content_hash = hashlib.sha256(rendered_content.encode("utf-8")).hexdigest()
+
+        provenance = ProvenanceMetadata(
+            source_type=ProvenanceSourceType.SYSTEM,
+            source_id="celebration-studio",
+            created_by_id=account_id,
+            audit_trail=["celebration-album-artifact-generated"],
+        )
+
+        artifact = CelebrationArtifact(
+            artifact_type=CelebrationArtifactType.CELEBRATION_ALBUM,
+            title=title,
+            subtitle=subtitle,
+            rendered_content=rendered_content,
+            content_hash=content_hash,
+            family_context_id=fc_id,
+            visibility=album.visibility,
+            provenance=provenance,
+        )
+
+        return self.derived.add_celebration_artifact(artifact)
+
     def get_celebration_artifact_for_account(
         self,
         artifact_id: str,
@@ -1738,13 +1832,40 @@ class CelebrationStudioService:
 
         self.derived.clear_celebration_artifacts(family_context_id)
 
-        rebuilt = []
+        rebuilt: List[CelebrationArtifact] = []
+
+        # 1. Event celebration artifacts
+        context_event_ids = set()
         for ev in self.canonical.list_events():
             if ev.family_context_id == family_context_id:
+                context_event_ids.add(ev.id)
                 if ev.category in (EventCategory.BIRTHDAY, EventCategory.ANNIVERSARY, EventCategory.MILESTONE):
                     created_by = ev.provenance.created_by_id if ev.provenance else ev.owner_id
                     art = self.build_celebration_artifact_for_event(created_by, ev.id, attach_as_media=False)
                     rebuilt.append(art)
+
+        # 2. Person celebration artifacts
+        for m_id in context.member_ids:
+            acc = self.canonical.get_account(m_id)
+            if acc and acc.person_id:
+                person = self.canonical.get_person(acc.person_id)
+                if person:
+                    art = self.build_celebration_artifact_for_person(m_id, person.id, family_context_id, attach_as_media=False)
+                    rebuilt.append(art)
+
+        # 3. Memory celebration artifacts
+        for mem in self.canonical.list_memories():
+            if (mem.event_id and mem.event_id in context_event_ids) or (mem.subject_id in context.member_ids):
+                created_by = mem.provenance.created_by_id if mem.provenance else context.member_ids[0]
+                art = self.build_celebration_artifact_for_memory(created_by, mem.id, attach_as_media=False)
+                rebuilt.append(art)
+
+        # 4. Media Album celebration artifacts
+        for album in self.canonical.list_media_albums():
+            if album.family_context_id == family_context_id:
+                art = self.build_celebration_album_artifact(album.owner_id, album.id, attach_as_media=False)
+                rebuilt.append(art)
+
         return rebuilt
 
 
@@ -2103,7 +2224,7 @@ class MayilService:
             audit_trail=["proposal-created"],
         )
 
-        st_str = start_time.isoformat() if start_time else (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat()
+        st_str = start_time.isoformat() if start_time else (_utc_now() + datetime.timedelta(days=1)).isoformat()
 
         proposed_changes = {
             "title": title,
@@ -2164,7 +2285,7 @@ class MayilService:
                 desc = changes.get("description", "")
                 fc_id = changes.get("family_context_id")
                 st_raw = changes.get("start_time")
-                st = datetime.datetime.fromisoformat(st_raw) if st_raw else datetime.datetime.utcnow()
+                st = datetime.datetime.fromisoformat(st_raw) if st_raw else _utc_now()
 
                 self.event_service.create_event(
                     owner_id=account_id,
@@ -2568,7 +2689,7 @@ class VelGuardianService:
         is_valid = len(anomalies) == 0
         return ValidationReport(
             is_valid=is_valid,
-            checked_at=datetime.datetime.utcnow(),
+            checked_at=_utc_now(),
             total_entities_inspected=inspected_count,
             anomalies=anomalies,
         )

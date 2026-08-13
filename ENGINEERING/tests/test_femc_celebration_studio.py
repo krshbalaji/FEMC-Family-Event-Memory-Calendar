@@ -233,6 +233,14 @@ def test_target_person_authorization():
     with pytest.raises(PermissionError):
         api.build_celebration_artifact_for_person_for_session(s3.session_id, p1.id, fc.id)
 
+    # Family member (s1) cannot build person celebration artifact for unrelated person (p3)
+    with pytest.raises(PermissionError):
+        api.build_celebration_artifact_for_person_for_session(s1.session_id, p3.id, fc.id)
+
+    # Family member (s1) can build person celebration artifact for authorized family person (p1 or p2)
+    art = api.build_celebration_artifact_for_person_for_session(s1.session_id, p1.id, fc.id)
+    assert art.source_person_id == p1.id
+
 
 def test_recurring_event_handling_without_canonical_duplication():
     api, acc1, acc2, acc3, p1, p2, p3, fc, s1, s2, s3 = _setup_baseline_context()
@@ -429,3 +437,21 @@ def test_malformed_dangling_source_handling():
         api.build_celebration_artifact_for_person_for_session(s1.session_id, "non-existent-person-id", fc.id)
     with pytest.raises(ValueError):
         api.build_celebration_artifact_for_memory_for_session(s1.session_id, "non-existent-memory-id")
+
+
+def test_celebration_album_artifact_generation():
+    api, acc1, acc2, acc3, p1, p2, p3, fc, s1, s2, s3 = _setup_baseline_context()
+    album = api.create_media_album_for_session(
+        session_id=s1.session_id,
+        title="Summer Holidays 2026",
+        description="Family album",
+        family_context_id=fc.id,
+    )
+
+    artifact = api.build_celebration_album_artifact_for_session(s1.session_id, album.id)
+    assert artifact.artifact_type == CelebrationArtifactType.CELEBRATION_ALBUM
+    assert "Summer Holidays 2026" in artifact.title
+
+    # Stranger cannot build celebration album artifact
+    with pytest.raises(PermissionError):
+        api.build_celebration_album_artifact_for_session(s3.session_id, album.id)

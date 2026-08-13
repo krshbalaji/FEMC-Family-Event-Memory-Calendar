@@ -12,6 +12,10 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
+def _utc_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
 class VisibilityLevel(str, enum.Enum):
     PUBLIC = "public"
     FAMILY = "family"
@@ -171,7 +175,7 @@ class ProvenanceMetadata:
     source_type: ProvenanceSourceType
     source_id: str
     created_by_id: str
-    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    created_at: datetime.datetime = field(default_factory=_utc_now)
     audit_trail: List[str] = field(default_factory=list)
 
 
