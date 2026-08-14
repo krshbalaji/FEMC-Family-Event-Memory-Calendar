@@ -515,3 +515,75 @@ def test_v2_3_c_mayil_avatar_visual_states():
     assert "listening" in HTML_TEMPLATE
     assert "thinking" in HTML_TEMPLATE
     assert "happy" in HTML_TEMPLATE
+
+
+# ==================================================
+# DEFECT CLEARANCE REGRESSION TESTS
+# ==================================================
+
+def test_v2_3_defect_clearance_navigation_helpers_present():
+    assert "function fetchAPI(" in HTML_TEMPLATE
+    assert "function closeModal(" in HTML_TEMPLATE
+    assert "function stopMediaStream(" in HTML_TEMPLATE
+    assert "function setActiveNav(" in HTML_TEMPLATE
+    assert "async function loadView(" in HTML_TEMPLATE
+    assert "async function initMembers(" in HTML_TEMPLATE
+    assert "async function switchPerspective(" in HTML_TEMPLATE
+    assert "async function resetDemoState(" in HTML_TEMPLATE
+
+
+def test_v2_3_defect_clearance_all_10_view_renderers_present():
+    assert "async function renderHome(" in HTML_TEMPLATE
+    assert "async function renderFamily(" in HTML_TEMPLATE
+    assert "async function renderCalendar(" in HTML_TEMPLATE
+    assert "async function renderMemories(" in HTML_TEMPLATE
+    assert "async function renderCelebrations(" in HTML_TEMPLATE
+    assert "async function renderReminders(" in HTML_TEMPLATE
+    assert "async function renderMayil(" in HTML_TEMPLATE
+    assert "async function renderGuardian(" in HTML_TEMPLATE
+    assert "async function renderSharing(" in HTML_TEMPLATE
+    assert "async function renderSettings(" in HTML_TEMPLATE
+
+
+def test_v2_3_defect_clearance_mayil_journey_close_lifecycle():
+    assert "stopNarration()" in HTML_TEMPLATE
+    assert "stopMediaStream()" in HTML_TEMPLATE
+    assert "speechSynthesis.cancel()" in HTML_TEMPLATE
+    assert "modal-container" in HTML_TEMPLATE
+
+
+def test_v2_3_defect_clearance_av_media_to_share_full_chain():
+    state = DemoState()
+    api = state.api
+    sess_id = state.session_alice.session_id
+    fc_id = state.family_context.id
+
+    # 1. Create Media Item attached to event & memory
+    media = api.create_media_item_for_session(
+        session_id=sess_id,
+        uri="https://images.unsplash.com/photo-1513151233558-d860c5398176",
+        media_type=MediaType.PHOTO,
+        caption="Alice Birthday Dinner Photo",
+        family_context_id=fc_id,
+        event_id=state.event1.id,
+        memory_id=state.memory1.id,
+        visibility=VisibilityLevel.FAMILY,
+    )
+    assert media.id is not None
+
+    # 2. Derive Celebration Artifact including media
+    art = api.build_celebration_artifact_for_event_for_session(sess_id, state.event1.id, attach_as_media=True)
+    assert art.source_event_id == state.event1.id
+
+    # 3. Create Share Link & Resolve
+    share = api.create_share_link_for_session(sess_id, ShareResourceType.MEDIA_ITEM, media.id, fc_id)
+    resolved = api.resolve_share_token(share.token)
+    assert resolved.id == media.id
+
+    # 4. Revoke Share Link & Verify Error
+    api.revoke_share_link_for_session(sess_id, share.token)
+    try:
+        api.resolve_share_token(share.token)
+        assert False, "Revoked share token should raise PermissionError"
+    except PermissionError:
+        pass

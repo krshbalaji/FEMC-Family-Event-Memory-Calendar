@@ -479,7 +479,658 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let recordedChunks = [];
 
         // ==========================================
-        // WORKSTREAM V2.3-C: MAYIL INTERACTIVE VISUAL ENGINE
+        // COMMON BROWSER INFRASTRUCTURE & LIFECYCLE
+        // ==========================================
+        async function fetchAPI(endpoint, options = {}) {
+            try {
+                const res = await fetch(endpoint, options);
+                if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+                return await res.json();
+            } catch (err) {
+                console.error("API Error:", err);
+                return {};
+            }
+        }
+
+        function stopMediaStream() {
+            if (activeMediaStream) {
+                try {
+                    activeMediaStream.getTracks().forEach(t => t.stop());
+                } catch (e) {}
+                activeMediaStream = null;
+            }
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                try {
+                    mediaRecorder.stop();
+                } catch (e) {}
+            }
+        }
+
+        function closeModal() {
+            stopNarration();
+            stopMediaStream();
+            const container = document.getElementById('modal-container');
+            if (container) {
+                container.style.display = 'none';
+                container.innerHTML = '';
+            }
+            document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('highlight'));
+            const navEl = document.getElementById(`nav-${currentView}`);
+            if (navEl) navEl.classList.add('active');
+        }
+
+        function setActiveNav(viewName) {
+            currentView = viewName || 'home';
+            document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active', 'highlight'));
+            const navEl = document.getElementById(`nav-${currentView}`);
+            if (navEl) navEl.classList.add('active');
+        }
+
+        async function initMembers() {
+            const data = await fetchAPI('/api/members');
+            membersData = data.members || [];
+            activeAccountId = data.active_account_id || '';
+
+            const select = document.getElementById('perspective-select');
+            if (select && membersData.length > 0) {
+                select.innerHTML = membersData.map(m => `
+                    <option value="${m.account_id}" ${m.is_active ? 'selected' : ''}>
+                        ${m.name} (${m.email})
+                    </option>
+                `).join('');
+            }
+        }
+
+        async function switchPerspective(accId) {
+            if (!accId) return;
+            await fetchAPI('/api/session/switch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_id: accId })
+            });
+            await initMembers();
+            await loadView(currentView);
+        }
+
+        async function resetDemoState() {
+            closeModal();
+            await fetchAPI('/api/reset', { method: 'POST' });
+            await initMembers();
+            await loadView(currentView);
+        }
+
+        async function loadView(viewName, evt) {
+            if (evt) evt.preventDefault();
+            setActiveNav(viewName);
+            const content = document.getElementById('content-area');
+            if (!content) return;
+            content.innerHTML = '<div style="text-align:center; padding:3rem; color:var(--text-sub);">Loading family data...</div>';
+
+            if (viewName === 'home') await renderHome(content);
+            else if (viewName === 'family') await renderFamily(content);
+            else if (viewName === 'calendar') await renderCalendar(content);
+            else if (viewName === 'memories') await renderMemories(content);
+            else if (viewName === 'celebrations') await renderCelebrations(content);
+            else if (viewName === 'reminders') await renderReminders(content);
+            else if (viewName === 'mayil') await renderMayil(content);
+            else if (viewName === 'guardian') await renderGuardian(content);
+            else if (viewName === 'sharing') await renderSharing(content);
+            else if (viewName === 'settings') await renderSettings(content);
+            else await renderHome(content);
+        }
+
+        // ==========================================
+        // VIEW RENDERERS (10 CORE PILLARS)
+        // ==========================================
+        async function renderHome(container) {
+            const data = await fetchAPI('/api/dashboard');
+            const summary = data.summary || {};
+            const entries = data.entries || [];
+
+            const eventsList = entries.filter(e => {
+                const type = e.item_type || e.entry_type;
+                return type === 'upcoming_event' || type === 'recurring_event';
+            });
+            const remindersList = entries.filter(e => {
+                const type = e.item_type || e.entry_type;
+                return type === 'reminder_due' || type === 'system_alert';
+            });
+            const memoriesList = entries.filter(e => {
+                const type = e.item_type || e.entry_type;
+                return type === 'recent_memory';
+            });
+            const celebrationsList = entries.filter(e => {
+                const type = e.item_type || e.entry_type;
+                return type === 'celebration_highlight';
+            });
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">🏠 Family Dashboard</h1>
+                        <div class="section-subtitle">Smith Family Overview & Active Highlights</div>
+                    </div>
+                    <div>
+                        <button class="btn" onclick="openCreateEventModal()">➕ Schedule Event</button>
+                    </div>
+                </div>
+
+                <div class="grid">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">📅 Upcoming Family Events</div>
+                            <span class="pill pill-general">${eventsList.length} Scheduled</span>
+                        </div>
+                        <div class="item-list">
+                            ${eventsList.length > 0 ? eventsList.map(e => `
+                                <div class="item-row">
+                                    <div>
+                                        <div class="item-main">${e.title}</div>
+                                        <div class="item-sub">${e.date_or_time || e.date || ''} ${e.description ? `• ${e.description}` : ''}</div>
+                                    </div>
+                                    <span class="pill pill-${(e.category || 'general').toLowerCase()}">${e.category || 'EVENT'}</span>
+                                </div>
+                            `).join('') : '<div class="item-sub">No upcoming events scheduled.</div>'}
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">🔔 Reminders & Alerts</div>
+                            <span class="pill pill-birthday">${remindersList.length} Active</span>
+                        </div>
+                        <div class="item-list">
+                            ${remindersList.length > 0 ? remindersList.map(e => `
+                                <div class="item-row">
+                                    <div>
+                                        <div class="item-main">${e.title}</div>
+                                        <div class="item-sub">${e.description || 'Action required'}</div>
+                                    </div>
+                                    <button class="btn btn-sm btn-outline" onclick="loadView('reminders')">View</button>
+                                </div>
+                            `).join('') : '<div class="item-sub">All reminders up to date!</div>'}
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">📖 Recent Family Memories</div>
+                            <span class="pill pill-milestone">${memoriesList.length} Memories</span>
+                        </div>
+                        <div class="item-list">
+                            ${memoriesList.length > 0 ? memoriesList.map(e => `
+                                <div class="item-row">
+                                    <div>
+                                        <div class="item-main">${e.title}</div>
+                                        <div class="item-sub">${e.description || ''}</div>
+                                    </div>
+                                    <button class="btn btn-sm btn-outline" onclick="loadView('memories')">Timeline</button>
+                                </div>
+                            `).join('') : '<div class="item-sub">No memories captured yet.</div>'}
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">🎉 Celebration Highlights</div>
+                            <span class="pill pill-anniversary">${celebrationsList.length} Cards</span>
+                        </div>
+                        <div class="item-list">
+                            ${celebrationsList.length > 0 ? celebrationsList.map(e => `
+                                <div class="item-row">
+                                    <div>
+                                        <div class="item-main">${e.title}</div>
+                                        <div class="item-sub">${e.description || ''}</div>
+                                    </div>
+                                    <button class="btn btn-sm btn-pink" onclick="loadView('celebrations')">Cards</button>
+                                </div>
+                            `).join('') : '<div class="item-sub">No celebration highlights yet.</div>'}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid var(--accent);">
+                    <div class="card-header">
+                        <div class="card-title" style="color:var(--accent);">🤖 Mayil AI Assistant & Guided Journey</div>
+                        <div style="display:flex; gap:0.5rem;">
+                            <button class="btn btn-pink btn-sm" onclick="openAskMayilPanel()">🤖 Ask Mayil</button>
+                            <button class="btn btn-outline btn-sm" onclick="openAnimatedJourneyModal()">🎬 Mayil's Journey</button>
+                        </div>
+                    </div>
+                    <div style="font-size:0.85rem; color:var(--text-sub); line-height:1.5;">
+                        Mayil AI continuously analyzes family events, memories, and reminders to offer context insights and proposal actions. Click <strong>Mayil's Journey</strong> for a guided visual tour of all 10 FEMC product pillars.
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderFamily(container) {
+            const data = await fetchAPI('/api/family');
+            const topology = data.topology || {};
+            const members = topology.members || [];
+            const relationships = topology.relationships || [];
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">👨‍👩‍👧‍👦 Family Tree & Identity</h1>
+                        <div class="section-subtitle">Smith Family Members, Topology, and Relationships</div>
+                    </div>
+                    <div>
+                        <button class="btn" onclick="openOnboardModal()">➕ Add Family Member</button>
+                    </div>
+                </div>
+
+                <div class="grid">
+                    ${members.map(m => `
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">${m.name}</div>
+                                ${m.account_id === activeAccountId ? '<span class="pill pill-health">Active User</span>' : '<span class="pill pill-general">Member</span>'}
+                            </div>
+                            <div style="font-size:0.85rem; color:var(--text-sub); margin-bottom:0.75rem;">
+                                ✉️ Email: <strong>${m.email || 'None'}</strong><br/>
+                                🎂 Birth Date: <strong>${m.birth_date || 'Not specified'}</strong>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="card" style="margin-top:1.5rem;">
+                    <div class="card-header">
+                        <div class="card-title">🌳 Relationship Topology Edges</div>
+                        <span class="pill pill-general">${relationships.length} Connections</span>
+                    </div>
+                    <div class="item-list">
+                        ${relationships.length > 0 ? relationships.map(r => `
+                            <div class="item-row">
+                                <div>
+                                    <div class="item-main">${r.source_person_name} ➔ ${r.target_person_name}</div>
+                                    <div class="item-sub">Type: ${r.relationship_type.toUpperCase()} | Confidence: ${r.confidence}</div>
+                                </div>
+                                <span class="pill pill-anniversary">${r.relationship_type}</span>
+                            </div>
+                        `).join('') : '<div class="item-sub">No relationship edges defined yet.</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderCalendar(container) {
+            const data = await fetchAPI('/api/events');
+            const calendar = data.calendar || [];
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">📅 Family Calendar & Agenda</h1>
+                        <div class="section-subtitle">Authorized Family Events and Milestones</div>
+                    </div>
+                    <div>
+                        <button class="btn" onclick="openCreateEventModal()">📅 Schedule Event</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Family Events Agenda</div>
+                        <span class="pill pill-general">${calendar.length} Events</span>
+                    </div>
+                    <div class="item-list">
+                        ${calendar.length > 0 ? calendar.map(c => `
+                            <div class="item-row">
+                                <div>
+                                    <div class="item-main">${c.title}</div>
+                                    <div class="item-sub">${c.date} • Visibility: ${c.visibility} ${c.description ? `• ${c.description}` : ''}</div>
+                                </div>
+                                <div style="display:flex; gap:0.5rem; align-items:center;">
+                                    <span class="pill pill-${(c.category || 'general').toLowerCase()}">${c.category || 'EVENT'}</span>
+                                    <button class="btn btn-sm btn-outline" onclick="openShareModal('EVENT', '${c.event_id}')">🔗 Share</button>
+                                </div>
+                            </div>
+                        `).join('') : '<div class="item-sub">No calendar events scheduled.</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderMemories(container) {
+            const timelineData = await fetchAPI('/api/timeline');
+            const mediaData = await fetchAPI('/api/media');
+
+            const timeline = timelineData.timeline || [];
+            const mediaItems = mediaData.items || [];
+            const mediaAlbums = mediaData.albums || [];
+
+            let mediaGalleryHTML = mediaItems.map(m => {
+                let playerHTML = '';
+                if (m.media_type === 'video') {
+                    playerHTML = `<video controls src="${m.uri}" style="width:100%; height:140px; object-fit:cover; display:block; background:#000;"></video>`;
+                } else if (m.media_type === 'audio') {
+                    playerHTML = `<div style="padding:1rem; background:#0f172a; height:140px; display:flex; align-items:center;"><audio controls src="${m.uri}" style="width:100%;"></audio></div>`;
+                } else {
+                    playerHTML = `<img src="${m.uri}" alt="${m.caption || 'Photo'}" />`;
+                }
+
+                const fn = generate_media_download_filename(m.caption, m.media_type);
+
+                return `
+                    <div class="media-thumb">
+                        ${playerHTML}
+                        <div class="media-caption">${m.caption || 'Family Moment'}</div>
+                        <div class="media-actions">
+                            <a href="${m.uri}" download="${fn}" class="btn btn-sm btn-outline" style="text-decoration:none;" target="_blank">⬇ Download</a>
+                            <button class="btn btn-sm btn-outline" onclick="openShareMediaModal('${m.id}', '${(m.caption || 'Family Media').replace(/'/g, "\'")}', '${m.uri}', '${m.media_type}', '${m.visibility}')">🔗 Share</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">📖 Family Memories & Media</h1>
+                        <div class="section-subtitle">Narrative Stories, Photos, Videos, and Voice Memos</div>
+                    </div>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn" onclick="openMediaCaptureCenter()">📸 Add Family Media</button>
+                        <button class="btn btn-outline" onclick="createMemoryPrompt()">✏️ Write Memory</button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:1.5rem;">
+                    <div class="card-header">
+                        <div class="card-title">📖 Memory Timeline Stream</div>
+                        <span class="pill pill-milestone">${timeline.length} Entries</span>
+                    </div>
+                    <div class="item-list">
+                        ${timeline.length > 0 ? timeline.map(t => `
+                            <div class="item-row">
+                                <div>
+                                    <div class="item-main">${t.title || 'Family Memory'}</div>
+                                    <div class="item-sub">${t.narrative || t.description || ''} • Author: ${t.author_name || 'Family Member'}</div>
+                                </div>
+                                <span class="pill pill-general">${t.item_type || 'MEMORY'}</span>
+                            </div>
+                        `).join('') : '<div class="item-sub">No memories recorded yet.</div>'}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">🎥 A/V Media Gallery (${mediaItems.length} Items, ${mediaAlbums.length} Albums)</div>
+                        <button class="btn btn-sm btn-pink" onclick="openMediaCaptureCenter()">📸 Capture / Upload</button>
+                    </div>
+                    <div class="media-gallery">
+                        ${mediaGalleryHTML || '<div class="item-sub" style="grid-column: 1/-1;">No media items captured yet. Click Add Family Media to capture a photo, video, or voice memo!</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderCelebrations(container) {
+            const data = await fetchAPI('/api/celebrations');
+            const artifacts = data.artifacts || [];
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">🎉 Celebration Studio</h1>
+                        <div class="section-subtitle">Derived Celebration Cards, Digests, Highlights, and Albums</div>
+                    </div>
+                    <div>
+                        <button class="btn btn-pink" onclick="openGenerateArtifactModal()">✨ Generate Celebration Card</button>
+                    </div>
+                </div>
+
+                <div class="grid">
+                    ${artifacts.length > 0 ? artifacts.map(a => `
+                        <div class="card" style="border-top: 4px solid var(--pink);">
+                            <div class="card-header">
+                                <div class="card-title">${a.title}</div>
+                                <span class="pill pill-anniversary">${a.artifact_type}</span>
+                            </div>
+                            <div style="font-size:0.85rem; color:var(--text-sub); margin-bottom:1rem; line-height:1.5;">
+                                ${a.subtitle ? `<div style="font-weight:700; color:var(--text-main);">${a.subtitle}</div>` : ''}
+                                <div style="margin-top:0.4rem; background:#0f172a; padding:0.6rem; border-radius:6px; border:1px solid rgba(255,255,255,0.05); color:var(--text-main);">
+                                    "${a.rendered_text || 'Celebration Artifact Derived Content'}"
+                                </div>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span style="font-size:0.75rem; color:var(--text-sub);">Visibility: ${a.visibility}</span>
+                                <button class="btn btn-sm btn-outline" onclick="openShareModal('MEDIA_ITEM', '${a.id}')">🔗 Share Artifact</button>
+                            </div>
+                        </div>
+                    `).join('') : '<div class="card"><div class="item-sub">No celebration artifacts generated yet. Click Generate Celebration Card above!</div></div>'}
+                </div>
+            `;
+        }
+
+        async function renderReminders(container) {
+            const data = await fetchAPI('/api/reminders');
+            const notifications = data.notifications || [];
+            const triggered = data.triggered || [];
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">🔔 Reminders & Notifications</h1>
+                        <div class="section-subtitle">Event Start Alerts and System Messages</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:1.5rem;">
+                    <div class="card-header">
+                        <div class="card-title">Active Notifications</div>
+                        <span class="pill pill-birthday">${notifications.length} Notifications</span>
+                    </div>
+                    <div class="item-list">
+                        ${notifications.length > 0 ? notifications.map(n => `
+                            <div class="item-row">
+                                <div>
+                                    <div class="item-main">${n.title}</div>
+                                    <div class="item-sub">${n.message}</div>
+                                </div>
+                                <div style="display:flex; gap:0.5rem; align-items:center;">
+                                    ${n.status === 'read' ? '<span class="pill pill-health">READ</span>' : `<button class="btn btn-sm btn-pink" onclick="markNotificationRead('${n.id}')">Mark Read</button>`}
+                                </div>
+                            </div>
+                        `).join('') : '<div class="item-sub">No active notifications.</div>'}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Triggered Due Reminders</div>
+                        <span class="pill pill-general">${triggered.length} Evaluated</span>
+                    </div>
+                    <div class="item-list">
+                        ${triggered.length > 0 ? triggered.map(t => `
+                            <div class="item-row">
+                                <div>
+                                    <div class="item-main">${t.title}</div>
+                                    <div class="item-sub">${t.message}</div>
+                                </div>
+                                <span class="pill pill-amber">DUE</span>
+                            </div>
+                        `).join('') : '<div class="item-sub">No due reminders triggered at this time.</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderMayil(container) {
+            const data = await fetchAPI('/api/mayil');
+            const insight = data.insight || {};
+            const proposals = data.proposals || [];
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">🧠 Mayil AI Intelligence</h1>
+                        <div class="section-subtitle">Context Insights and Action Proposals</div>
+                    </div>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn btn-pink" onclick="openAskMayilPanel()">🤖 Ask Mayil</button>
+                        <button class="btn btn-outline" onclick="openAnimatedJourneyModal()">🎬 Mayil's Journey</button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:1.5rem; border-left:4px solid var(--accent);">
+                    <div class="card-header">
+                        <div class="card-title" style="color:var(--accent);">💡 Mayil Noticed (Context Analysis)</div>
+                        <span class="pill pill-general">ACTIVE INSIGHT</span>
+                    </div>
+                    <div style="font-size:0.9rem; color:var(--text-main); line-height:1.5;">
+                        ${insight.summary || 'Mayil analyzed your family events, memories, and places to provide intelligent context awareness.'}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Proposals & Recommendations</div>
+                        <span class="pill pill-milestone">${proposals.length} Proposals</span>
+                    </div>
+                    <div class="item-list">
+                        ${proposals.length > 0 ? proposals.map(p => `
+                            <div class="item-row">
+                                <div>
+                                    <div class="item-main">${p.title}</div>
+                                    <div class="item-sub">${p.description}</div>
+                                </div>
+                                ${p.status === 'approved' ? '<span class="pill pill-health">APPROVED</span>' : `<button class="btn btn-sm" onclick="approveProposal('${p.id}')">Approve Proposal</button>`}
+                            </div>
+                        `).join('') : '<div class="item-sub">No pending proposals from Mayil at this time.</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderGuardian(container) {
+            const data = await fetchAPI('/api/guardian');
+            const audit = data.audit || {};
+            const proposals = data.repair_proposals || [];
+            const isHealthy = audit.is_valid !== false;
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">🛡️ VEL Guardian Governance</h1>
+                        <div class="section-subtitle">Real-Time Data Integrity, Privacy Audits, and Controlled Repair</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:1.5rem; border-left:4px solid ${isHealthy ? 'var(--green)' : '#f87171'};">
+                    <div class="card-header">
+                        <div class="card-title">System Health & Data Integrity Audit</div>
+                        <span class="pill ${isHealthy ? 'pill-health' : 'pill-private'}">${isHealthy ? 'HEALTHY' : 'ANOMALY DETECTED'}</span>
+                    </div>
+                    <div style="font-size:0.9rem; color:var(--text-sub);">
+                        Guardian continuously verifies privacy rules, projection consistency, and reference integrity across canonical data and derived caches.
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Repair Proposals</div>
+                        <span class="pill pill-general">${proposals.length} Proposals</span>
+                    </div>
+                    <div class="item-list">
+                        ${proposals.length > 0 ? proposals.map(p => `
+                            <div class="item-row">
+                                <div>
+                                    <div class="item-main">${p.description || p.anomaly_type || 'Data Repair Proposal'}</div>
+                                    <div class="item-sub">Classification: ${p.repair_classification || 'DERIVED_REPAIR'}</div>
+                                </div>
+                                ${p.status === 'executed' ? '<span class="pill pill-health">REPAIRED</span>' : `<button class="btn btn-sm btn-pink" onclick="executeRepair('${p.id}')">Execute Repair</button>`}
+                            </div>
+                        `).join('') : '<div class="item-sub">No data integrity anomalies detected. Your family data is 100% healthy!</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderSharing(container) {
+            const data = await fetchAPI('/api/sharing');
+            const links = data.share_links || [];
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">🔗 Secure Sharing Tokens</h1>
+                        <div class="section-subtitle">Tokenized Links, Revocation, and Access Controls</div>
+                    </div>
+                    <div>
+                        <button class="btn" onclick="openShareModal('EVENT', 'demo_event')">🔗 Create Share Link</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Active Share Tokens</div>
+                        <span class="pill pill-general">${links.length} Links</span>
+                    </div>
+                    <div class="item-list">
+                        ${links.length > 0 ? links.map(l => {
+                            const url = `${window.location.origin}/share?token=${l.token}`;
+                            const isRev = l.is_revoked;
+                            return `
+                                <div class="item-row">
+                                    <div>
+                                        <div class="item-main">Resource: ${l.resource_type} (${l.resource_id})</div>
+                                        <div class="item-sub">Token: <code>${l.token}</code> | Expires: ${l.expires_at || 'Never'}</div>
+                                    </div>
+                                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                                        ${isRev ? '<span class="pill pill-private">REVOKED</span>' : `
+                                            <button class="btn btn-sm btn-outline" onclick="copyShareUrl('${url}')">📋 Copy</button>
+                                            <button class="btn btn-sm btn-pink" onclick="revokeShareLink('${l.token}')">Revoke</button>
+                                        `}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('') : '<div class="item-sub">No share links created yet.</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderSettings(container) {
+            const data = await fetchAPI('/api/export');
+            const exportData = data.export || {};
+            const validation = data.validation || {};
+            const jsonStr = JSON.stringify(exportData, null, 2);
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">⚙️ Data Portability & Settings</h1>
+                        <div class="section-subtitle">Complete Family Data Export & Schema Validation</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:1.5rem;">
+                    <div class="card-header">
+                        <div class="card-title">Schema Validation Status</div>
+                        <span class="pill ${validation.is_valid ? 'pill-health' : 'pill-private'}">${validation.is_valid ? 'VALIDATED 1.0' : 'INVALID'}</span>
+                    </div>
+                    <div style="font-size:0.85rem; color:var(--text-sub);">
+                        Export data structure validated against canonical schema version 1.0. 100% compatible for backup and offline storage.
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Family Data JSON Export</div>
+                        <button class="btn btn-sm btn-outline" onclick="copyShareUrl('${encodeURIComponent(jsonStr)}')">📋 Copy JSON</button>
+                    </div>
+                    <pre style="max-height:300px; overflow-y:auto;">${jsonStr}</pre>
+                </div>
+            `;
+        }
+
+
+        // ==========================================
+        // WORKSTREAM V2.3-C: MAYIL INTERACTIVE VISUAL ENGINE & MODALS
         // ==========================================
         let mayilAvatarState = 'idle'; // idle, speaking, listening, thinking, happy, helping
         let conversationHistory = [];
