@@ -4,6 +4,9 @@ import datetime
 from typing import List, Optional
 
 from .models import (
+    ActionType,
+    ResourceType,
+    TransactionRecord,
     ActionProposal,
     AnomalySeverity,
     AnomalyType,
@@ -50,11 +53,20 @@ from .models import (
     _utc_now,
     ValidationReport,
     VisibilityLevel,
+    ContextType,
+    AgeGroup,
+    Language,
+    GuideMode,
+    SceneDefinition,
+    GuideSessionState,
+    MayilPracticeWorld,
 )
 
 
-from .repositories import CanonicalRepository, DerivedRepository
+from .repositories import CanonicalRepository, DerivedRepository, TransactionMemoryRepository
 from .services import (
+    MayilGuidedExperienceService,
+    TransactionMemoryService,
     AuthorizationService,
     CalendarService,
     CelebrationStudioService,
@@ -114,6 +126,10 @@ class FEMCApi:
             celebration_studio_service=self.celebration_studio,
         )
         self.search = SearchService(self.derived)
+        self.transaction_repository = TransactionMemoryRepository()
+        self.transaction_memory = TransactionMemoryService(self.transaction_repository, self.canonical, self.authorization)
+        self.data_portability.transaction_service = self.transaction_memory
+        self.guided_experience = MayilGuidedExperienceService(self.canonical, self.derived, self.authorization, self.transaction_memory)
 
 
 
@@ -620,3 +636,197 @@ class FEMCApi:
     def list_celebration_artifacts_for_session(self, session_id: str, family_context_id: str) -> List[CelebrationArtifact]:
         session = self._validate_session(session_id)
         return self.celebration_studio.list_celebration_artifacts_for_context_for_account(family_context_id, session.account_id)
+
+    def record_transaction_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        action_type: ActionType,
+        resource_type: ResourceType,
+        resource_id: str,
+        resource_label_snapshot: str,
+        operation: str,
+        visibility: VisibilityLevel = VisibilityLevel.FAMILY,
+        correlation_id: Optional[str] = None,
+        parent_transaction_id: Optional[str] = None,
+        changed_fields: Optional[dict] = None,
+        reason: Optional[str] = None,
+        related_resource_ids: Optional[List[str]] = None,
+    ) -> TransactionRecord:
+        session = self._validate_session(session_id)
+        if not session:
+            raise PermissionError("Invalid session")
+        account = self.canonical.get_account(session.account_id)
+        actor_person_id = account.person_id if account else None
+
+        return self.transaction_memory.record_transaction(
+            actor_account_id=session.account_id,
+            actor_person_id=actor_person_id,
+            family_context_id=family_context_id,
+            action_type=action_type,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_label_snapshot=resource_label_snapshot,
+            operation=operation,
+            visibility=visibility,
+            correlation_id=correlation_id,
+            parent_transaction_id=parent_transaction_id,
+            changed_fields=changed_fields,
+            reason=reason,
+            related_resource_ids=related_resource_ids,
+        )
+
+    def get_transaction_history_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        resource_type: Optional[ResourceType] = None,
+        resource_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[TransactionRecord]:
+        session = self._validate_session(session_id)
+        if not session:
+            raise PermissionError("Invalid session")
+        return self.transaction_memory.get_transaction_history_for_session(
+            account_id=session.account_id,
+            family_context_id=family_context_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+
+    def get_resource_history_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        resource_type: ResourceType,
+        resource_id: str,
+    ) -> List[TransactionRecord]:
+        session = self._validate_session(session_id)
+        if not session:
+            raise PermissionError("Invalid session")
+        return self.transaction_memory.get_resource_history_for_session(
+            account_id=session.account_id,
+            family_context_id=family_context_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+        )
+
+    def explain_resource_history_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        resource_type: ResourceType,
+        resource_id: str,
+    ) -> dict:
+        session = self._validate_session(session_id)
+        if not session:
+            raise PermissionError("Invalid session")
+        return self.transaction_memory.explain_resource_history(
+            account_id=session.account_id,
+            family_context_id=family_context_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+        )
+
+    def initialize_guided_experience_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        mode: GuideMode = GuideMode.LEARN_BY_DOING,
+        context_type: ContextType = ContextType.FAMILY,
+        age_group: AgeGroup = AgeGroup.MIXED,
+        include_family: bool = True,
+        language: Language = Language.ENGLISH,
+    ) -> GuideSessionState:
+        session = self._validate_session(session_id)
+        return self.guided_experience.initialize_session(
+            account_id=session.account_id,
+            family_context_id=family_context_id,
+            mode=mode,
+            context_type=context_type,
+            age_group=age_group,
+            include_family=include_family,
+            language=language,
+        )
+
+    def get_guided_experience_state_for_session(self, session_id: str) -> Optional[GuideSessionState]:
+        session = self._validate_session(session_id)
+        return self.guided_experience.get_session(session.account_id)
+
+    def get_shared_journey_scenes_for_session(self, session_id: str) -> List[SceneDefinition]:
+        session = self._validate_session(session_id)
+        st = self.guided_experience.get_session(session.account_id)
+        ctx = st.context_type if st else ContextType.FAMILY
+        lang = st.language if st else Language.ENGLISH
+        return self.guided_experience.get_shared_journey_scenes(ctx, lang)
+
+    def validate_guided_action_for_session(
+        self,
+        session_id: str,
+        action_type: ActionType,
+        control_id: str,
+        resource_id: str = "",
+        resource_label: str = "",
+        operation: str = "",
+    ) -> dict:
+        session = self._validate_session(session_id)
+        return self.guided_experience.validate_user_action(
+            account_id=session.account_id,
+            action_type=action_type,
+            control_id=control_id,
+            resource_id=resource_id,
+            resource_label=resource_label,
+            operation=operation,
+        )
+
+    def switch_guided_experience_mode_for_session(self, session_id: str, new_mode: GuideMode) -> GuideSessionState:
+        session = self._validate_session(session_id)
+        return self.guided_experience.switch_mode(session.account_id, new_mode)
+
+    def reset_guided_experience_for_session(self, session_id: str) -> GuideSessionState:
+        session = self._validate_session(session_id)
+        return self.guided_experience.reset_guided_session(session.account_id)
+
+    def start_practice_world_for_session(
+        self,
+        session_id: str,
+        family_context_id: str,
+        context_type: ContextType = ContextType.FAMILY,
+        age_group: AgeGroup = AgeGroup.MIXED,
+        include_family: bool = True,
+        language: Language = Language.ENGLISH,
+    ) -> MayilPracticeWorld:
+        session = self._validate_session(session_id)
+        return self.guided_experience.get_or_create_practice_world(
+            session.account_id, family_context_id, context_type, age_group, include_family, language
+        )
+
+    def get_practice_world_state_for_session(self, session_id: str) -> Optional[MayilPracticeWorld]:
+        session = self._validate_session(session_id)
+        return getattr(self.guided_experience, "practice_worlds", {}).get(session.account_id)
+
+    def execute_simulated_action_for_session(
+        self,
+        session_id: str,
+        action_type: ActionType,
+        control_id: str,
+        resource_type: ResourceType = ResourceType.EVENT,
+        payload: Optional[dict] = None,
+    ) -> dict:
+        session = self._validate_session(session_id)
+        return self.guided_experience.execute_simulated_action(
+            session.account_id, action_type, control_id, resource_type, payload
+        )
+
+    def explain_practice_history_for_session(self, session_id: str) -> dict:
+        session = self._validate_session(session_id)
+        return self.guided_experience.explain_practice_history(session.account_id)
+
+    def reset_practice_world_for_session(self, session_id: str) -> MayilPracticeWorld:
+        session = self._validate_session(session_id)
+        return self.guided_experience.reset_practice_world(session.account_id)
+
+    def exit_practice_world_for_session(self, session_id: str) -> dict:
+        session = self._validate_session(session_id)
+        return self.guided_experience.exit_practice_world(session.account_id)

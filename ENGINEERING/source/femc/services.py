@@ -5,6 +5,9 @@ import hashlib
 from typing import List, Optional
 
 from .models import (
+    ActionType,
+    ResourceType,
+    TransactionRecord,
     Account,
     ActionProposal,
     AnomalySeverity,
@@ -60,11 +63,18 @@ from .models import (
     TimelineProjectionEntry,
     ValidationReport,
     VisibilityLevel,
+    ContextType,
+    AgeGroup,
+    Language,
+    GuideMode,
+    SceneDefinition,
+    GuideSessionState,
+    MayilPracticeWorld,
 )
 
 
 
-from .repositories import CanonicalRepository, DerivedRepository
+from .repositories import CanonicalRepository, DerivedRepository, TransactionMemoryRepository
 
 
 class AuthorizationService:
@@ -1905,6 +1915,7 @@ class DataPortabilityService:
             "action_proposals": [],
             "repair_proposals": [],
             "insight_analyses": [],
+            "transactions": [],
         }
 
 
@@ -2105,6 +2116,21 @@ class DataPortabilityService:
                     "classification": c_val,
                     "requires_human_approval": r_prop.requires_human_approval,
                     "is_executed": r_prop.is_executed,
+                })
+
+        if hasattr(self, "transaction_service") and self.transaction_service:
+            tx_history = self.transaction_service.get_transaction_history_for_session(account_id, family_context_id, limit=200)
+            for tx in tx_history:
+                records["transactions"].append({
+                    "transaction_id": tx.transaction_id,
+                    "timestamp": tx.timestamp.isoformat(),
+                    "actor_account_id": tx.actor_account_id,
+                    "action_type": tx.action_type.value if hasattr(tx.action_type, "value") else str(tx.action_type),
+                    "resource_type": tx.resource_type.value if hasattr(tx.resource_type, "value") else str(tx.resource_type),
+                    "resource_id": tx.resource_id,
+                    "resource_label_snapshot": tx.resource_label_snapshot,
+                    "operation": tx.operation,
+                    "visibility": tx.visibility.value if hasattr(tx.visibility, "value") else str(tx.visibility),
                 })
 
         return DataExportResult(
@@ -2794,4 +2820,743 @@ class VelGuardianService:
 
 
 
+
+
+
+class TransactionMemoryService:
+    def __init__(
+        self,
+        repository: TransactionMemoryRepository,
+        canonical: CanonicalRepository,
+        authorization: AuthorizationService,
+    ) -> None:
+        self.repository = repository
+        self.canonical = canonical
+        self.authorization = authorization
+
+    def record_transaction(
+        self,
+        actor_account_id: str,
+        family_context_id: str,
+        action_type: ActionType,
+        resource_type: ResourceType,
+        resource_id: str,
+        resource_label_snapshot: str,
+        operation: str,
+        actor_person_id: Optional[str] = None,
+        visibility: VisibilityLevel = VisibilityLevel.FAMILY,
+        result_status: str = "SUCCESS",
+        source: str = "user_action",
+        correlation_id: Optional[str] = None,
+        parent_transaction_id: Optional[str] = None,
+        changed_fields: Optional[dict] = None,
+        before_snapshot: Optional[dict] = None,
+        after_snapshot: Optional[dict] = None,
+        reason: Optional[str] = None,
+        related_resource_ids: Optional[List[str]] = None,
+        metadata: Optional[dict] = None,
+    ) -> TransactionRecord:
+        record = TransactionRecord(
+            actor_account_id=actor_account_id,
+            actor_person_id=actor_person_id,
+            family_context_id=family_context_id,
+            action_type=action_type,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_label_snapshot=resource_label_snapshot,
+            operation=operation,
+            result_status=result_status,
+            visibility=visibility,
+            source=source,
+            correlation_id=correlation_id,
+            parent_transaction_id=parent_transaction_id,
+            changed_fields=changed_fields,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            reason=reason,
+            related_resource_ids=related_resource_ids or [],
+            metadata=metadata or {},
+        )
+        return self.repository.record_transaction(record)
+
+    def can_view_transaction(self, account_id: str, record: TransactionRecord, context: Optional[FamilyContext]) -> bool:
+        if record.visibility == VisibilityLevel.PUBLIC:
+            return True
+        if record.visibility == VisibilityLevel.PRIVATE:
+            return account_id == record.actor_account_id
+        if record.visibility == VisibilityLevel.FAMILY:
+            if context is None:
+                return False
+            return account_id in context.member_ids or account_id == record.actor_account_id
+        return False
+
+    def get_transaction_history_for_session(
+        self,
+        account_id: str,
+        family_context_id: str,
+        resource_type: Optional[ResourceType] = None,
+        resource_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[TransactionRecord]:
+        context = self.canonical.get_family_context(family_context_id)
+        all_records = self.repository.list_transactions(
+            family_context_id=family_context_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=None,
+        )
+
+        authorized_records = [
+            r for r in all_records
+            if self.can_view_transaction(account_id, r, context)
+        ]
+
+        return authorized_records[:limit]
+
+    def get_resource_history_for_session(
+        self,
+        account_id: str,
+        family_context_id: str,
+        resource_type: ResourceType,
+        resource_id: str,
+    ) -> List[TransactionRecord]:
+        return self.get_transaction_history_for_session(
+            account_id=account_id,
+            family_context_id=family_context_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=100,
+        )
+
+    def get_correlation_chain(
+        self,
+        account_id: str,
+        family_context_id: str,
+        correlation_id: str,
+    ) -> List[TransactionRecord]:
+        context = self.canonical.get_family_context(family_context_id)
+        all_records = self.repository.list_transactions(
+            family_context_id=family_context_id,
+            correlation_id=correlation_id,
+            limit=None,
+        )
+        return [r for r in all_records if self.can_view_transaction(account_id, r, context)]
+
+    def explain_resource_history(
+        self,
+        account_id: str,
+        family_context_id: str,
+        resource_type: ResourceType,
+        resource_id: str,
+    ) -> dict:
+        history = self.get_resource_history_for_session(account_id, family_context_id, resource_type, resource_id)
+
+        current_state_desc = "Resource exists in canonical state."
+        if resource_type == ResourceType.EVENT:
+            ev = self.canonical.get_event(resource_id)
+            if not ev: current_state_desc = "Event has been deleted."
+            else: current_state_desc = f"Event '{ev.title}' scheduled on {ev.start_time} ({ev.visibility.value})."
+        elif resource_type == ResourceType.MEMORY:
+            mem = self.canonical.get_memory(resource_id)
+            if not mem: current_state_desc = "Memory story has been deleted."
+            else: current_state_desc = f"Memory '{mem.title}' ({mem.visibility.value})."
+
+        facts = []
+        for r in reversed(history):
+            actor_name = r.actor_account_id
+            acct = self.canonical.get_account(r.actor_account_id)
+            if acct and acct.person_id:
+                p = self.canonical.get_person(acct.person_id)
+                if p: actor_name = p.name
+
+            t_str = r.timestamp.strftime("%b %d, %H:%M UTC")
+            facts.append(f"RECORDED FACT [{t_str}]: {actor_name} executed {r.action_type.value.upper()} ({r.operation}) on {r.resource_label_snapshot}")
+
+        interpretation = f"Traced {len(history)} authorized historical activities leading to current state."
+
+        return {
+            "resource_id": resource_id,
+            "resource_type": resource_type.value,
+            "recorded_facts": facts,
+            "current_state": current_state_desc,
+            "mayil_interpretation": interpretation,
+            "history_count": len(history),
+        }
+
+
+# ============================================================
+# V2.3-D MAYIL LEARN-BY-DOING + LIVING DEMO SERVICE
+# ============================================================
+
+class MayilGuidedExperienceService:
+    def __init__(
+        self,
+        canonical: CanonicalRepository,
+        derived: DerivedRepository,
+        auth: AuthorizationService,
+        transaction_service: Optional[TransactionMemoryService] = None,
+    ) -> None:
+        self.canonical = canonical
+        self.derived = derived
+        self.auth = auth
+        self.transaction_service = transaction_service
+        self.guided_sessions: Dict[str, GuideSessionState] = {}
+
+    def initialize_session(
+        self,
+        account_id: str,
+        family_context_id: str,
+        mode: GuideMode = GuideMode.LEARN_BY_DOING,
+        context_type: ContextType = ContextType.FAMILY,
+        age_group: AgeGroup = AgeGroup.MIXED,
+        include_family: bool = True,
+        language: Language = Language.ENGLISH,
+    ) -> GuideSessionState:
+        session = GuideSessionState(
+            account_id=account_id,
+            family_context_id=family_context_id,
+            current_mode=mode,
+            context_type=context_type,
+            age_group=age_group,
+            include_family=include_family,
+            language=language,
+        )
+        self.guided_sessions[account_id] = session
+        return session
+
+    def get_session(self, account_id: str) -> Optional[GuideSessionState]:
+        return self.guided_sessions.get(account_id)
+
+    def get_shared_journey_scenes(self, context_type: ContextType = ContextType.FAMILY, language: Language = Language.ENGLISH) -> List[SceneDefinition]:
+        # Multilingual definitions for English, Tamil, Hindi
+        scenes = [
+            SceneDefinition(
+                scene_id="SCENE_WELCOME",
+                scene_index=0,
+                title={"en": "Welcome to FEMC", "ta": "FEMC-க்கு நல்வரவு", "hi": "FEMC में आपका स्वागत है"},
+                instruction={"en": "Let's explore your home dashboard together.", "ta": "உங்கள் முகப்புப் பலகையை ஒன்றாக ஆராய்வோம்.", "hi": "आइए साथ मिलकर अपना मुख्य डैशबोर्ड देखें।"},
+                narration={"en": "Welcome! I am Mayil, your family memory companion.", "ta": "வணக்கம்! நான் மயில், உங்கள் குடும்ப நினைவுத் தோழன்.", "hi": "नमस्ते! मैं मयिल हूँ, आपका पारिवारिक स्मरण साथी।"},
+                subtitle={"en": "Overview of active family events and memories", "ta": "செயலில் உள்ள குடும்ப நிகழ்வுகள் மற்றும் நினைவுகள்", "hi": "सक्रिय पारिवारिक आयोजनों और यादों का अवलोकन"},
+                success_message={"en": "Great start!", "ta": "சிறப்பான தொடக்கம்!", "hi": "शानदार शुरुआत!"},
+                help_message={"en": "Click on HOME to view dashboard.", "ta": "முகப்பைத் பார்க்க HOME என்பதைக் கிளிக் செய்யவும்.", "hi": "डैशबोर्ड देखने के लिए HOME पर क्लिक करें।"},
+                target_view="home",
+                target_control="nav-home",
+                expected_action=ActionType.PERSPECTIVE_SWITCH,
+                expected_resource_type=ResourceType.GROUP_CONTEXT,
+                next_scene_id="SCENE_FAMILY",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_FAMILY",
+                scene_index=1,
+                title={"en": "Family & Relationships", "ta": "குடும்பம் மற்றும் உறவுகள்", "hi": "परिवार और रिश्ते"},
+                instruction={"en": "Please click FAMILY to view your group topology.", "ta": "உங்கள் குழு அமைப்பைப் பார்க்க FAMILY என்பதைக் கிளிக் செய்யவும்.", "hi": "अपने समूह टोपोलॉजी को देखने के लिए FAMILY पर क्लिक करें।"},
+                narration={"en": "Here are the people you love and care about.", "ta": "இங்கே நீங்கள் நேசிக்கும் குடும்ப உறுப்பினர்கள் உள்ளனர்.", "hi": "यहाँ वे लोग हैं जिन्हें आप प्यार करते हैं।"},
+                subtitle={"en": "Family members and relationship connections", "ta": "குடும்ப உறுப்பினர்கள் மற்றும் உறவு இணைப்புகள்", "hi": "परिवार के सदस्य और रिश्तों के संबंध"},
+                success_message={"en": "Wonderful! You are viewing family topology.", "ta": "அருமை! நீங்கள் குடும்ப அமைப்பைப் பார்க்கிறீர்கள்.", "hi": "अद्भुत! आप पारिवारिक टोपोलॉजी देख रहे हैं।"},
+                help_message={"en": "Click the FAMILY item on the top navigation bar.", "ta": "மேல் வழிசெலுத்தல் பட்டியில் உள்ள FAMILY என்பதைக் கிளிக் செய்யவும்.", "hi": "नेविगेशन बार पर FAMILY पर क्लिक करें।"},
+                target_view="family",
+                target_control="nav-family",
+                expected_action=ActionType.PERSPECTIVE_SWITCH,
+                expected_resource_type=ResourceType.PERSON,
+                next_scene_id="SCENE_CALENDAR",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_CALENDAR",
+                scene_index=2,
+                title={"en": "Shared Calendar", "ta": "பகிரப்பட்ட நாட்காட்டி", "hi": "साझा कैलेंडर"},
+                instruction={"en": "Click CALENDAR to view scheduled events.", "ta": "திட்டமிடப்பட்ட நிகழ்வுகளைப் பார்க்க CALENDAR என்பதைக் கிளிக் செய்யவும்.", "hi": "नियोजित कार्यक्रमों को देखने के लिए CALENDAR पर क्लिक करें।"},
+                narration={"en": "Never miss a family milestone or celebration.", "ta": "குடும்ப மைல்கல் அல்லது கொண்டாட்டத்தை என்றும் தவறவிடாதீர்கள்.", "hi": "किसी भी पारिवारिक अवसर को कभी न भूलें।"},
+                subtitle={"en": "Timeline of family celebrations and milestones", "ta": "குடும்பக் கொண்டாட்டங்கள் மற்றும் மைல்கற்களின் காலவரிசை", "hi": "पारिवारिक समारोहों और मील के पत्थरों की समयरेखा"},
+                success_message={"en": "Excellent! You are now in the Calendar view.", "ta": "மிக நன்று! இப்போது நாட்காட்டி பார்வையில் உள்ளீர்கள்.", "hi": "उत्कृष्ट! अब आप कैलेंडर दृश्य में हैं।"},
+                help_message={"en": "Click CALENDAR on the top navigation ribbon.", "ta": "மேல் வழிசெலுத்தல் ரிப்பனில் CALENDAR என்பதைக் கிளிக் செய்யவும்.", "hi": "शीर्ष नेविगेशन रिबन पर CALENDAR पर क्लिक करें।"},
+                target_view="calendar",
+                target_control="nav-events",
+                expected_action=ActionType.PERSPECTIVE_SWITCH,
+                expected_resource_type=ResourceType.EVENT,
+                next_scene_id="SCENE_CREATE_EVENT",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_CREATE_EVENT",
+                scene_index=3,
+                title={"en": "Schedule a Real Event", "ta": "ஒரு உண்மையான நிகழ்வைத் திட்டமிடுங்கள்", "hi": "एक वास्तविक कार्यक्रम निर्धारित करें"},
+                instruction={"en": "Now let's create a real event! Click + Schedule New Event.", "ta": "இப்போது ஒரு புதிய நிகழ்வை உருவாக்குவோம்! + Schedule New Event என்பதைக் கிளிக் செய்யவும்.", "hi": "अब एक नया कार्यक्रम बनाएं! + Schedule New Event पर क्लिक करें।"},
+                narration={"en": "Creating events keeps memories organized in context.", "ta": "நிகழ்வுகளை உருவாக்குவது நினைவுகளை ஒழுங்கமைக்கிறது.", "hi": "आयोजन बनाने से यादें व्यवस्थित रहती हैं।"},
+                subtitle={"en": "Add birthday, milestone or family gathering", "ta": "பிறந்த நாள் அல்லது குடும்பக் கூட்டத்தைச் சேர்க்கவும்", "hi": "जन्मदिन या पारिवारिक समारोह जोड़ें"},
+                success_message={"en": "Bravo! You created a real FEMC event.", "ta": "அற்புதம்! நீங்கள் ஒரு புதிய நிகழ்வை உருவாக்கியுள்ளீர்கள்.", "hi": "शाबाश! आपने एक नया आयोजन बनाया।"},
+                help_message={"en": "Click the '+ Schedule New Event' button on the Calendar card.", "ta": "கார்டில் உள்ள '+ Schedule New Event' பொத்தானைக் கிளிக் செய்யவும்.", "hi": "कैलेंडर कार्ड पर '+ Schedule New Event' बटन पर क्लिक करें।"},
+                target_view="calendar",
+                target_control="btn-create-event",
+                expected_action=ActionType.CREATE,
+                expected_resource_type=ResourceType.EVENT,
+                transaction_expectation="EVENT_CREATE",
+                next_scene_id="SCENE_MEMORIES",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_MEMORIES",
+                scene_index=4,
+                title={"en": "Memories & Media", "ta": "நினைவுகள் மற்றும் ஊடகங்கள்", "hi": "यादें और मीडिया"},
+                instruction={"en": "Click MEMORIES & MEDIA to view stories.", "ta": "கதைகளைப் பார்க்க MEMORIES & MEDIA என்பதைக் கிளிக் செய்யவும்.", "hi": "कहानियां देखने के लिए MEMORIES & MEDIA पर क्लिक करें।"},
+                narration={"en": "Memories connect stories with rich photos and audio.", "ta": "நினைவுகள் கதைகளை புகைப்படங்களுடன் இணைக்கின்றன.", "hi": "यादें कहानियों को तस्वीरों से जोड़ती हैं।"},
+                subtitle={"en": "Story wall with audio notes and media cards", "ta": "ஒலி குறிப்புகள் மற்றும் புகைப்படச் சுவர்கள்", "hi": "ऑडियो नोट्स और फोटो कार्ड के साथ स्टोरी वॉल"},
+                success_message={"en": "Awesome! Welcome to the Memory Story Wall.", "ta": "அருமை! நினைவுச் சுவருக்கு நல்வரவு.", "hi": "शानदार! मेमोरी स्टोरी वॉल में आपका स्वागत है।"},
+                help_message={"en": "Click MEMORIES & MEDIA on the navigation bar.", "ta": "வழிசெலுத்தல் பட்டியில் MEMORIES & MEDIA என்பதைக் கிளிக் செய்யவும்.", "hi": "नेविगेशन बार पर MEMORIES & MEDIA पर क्लिक करें।"},
+                target_view="memories",
+                target_control="nav-timeline",
+                expected_action=ActionType.PERSPECTIVE_SWITCH,
+                expected_resource_type=ResourceType.MEMORY,
+                next_scene_id="SCENE_CAPTURE_MEDIA",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_CAPTURE_MEDIA",
+                scene_index=5,
+                title={"en": "Add & Capture Media", "ta": "ஊடகங்களைச் சேர்க்கவும்", "hi": "मीडिया जोड़ें"},
+                instruction={"en": "Click + Add Photo / Media to attach a photo.", "ta": "புகைப்படத்தை இணைக்க + Add Photo / Media என்பதைக் கிளிக் செய்யவும்.", "hi": "फोटो संलग्न करने के लिए + Add Photo / Media पर क्लिक करें।"},
+                narration={"en": "Photos and audio bring family events to life.", "ta": "புகைப்படங்கள் நிகழ்வுகளுக்கு உயிர் கொடுக்கின்றன.", "hi": "तस्वीरें पारिवारिक कार्यक्रमों में जान डालती हैं।"},
+                subtitle={"en": "Attach photo gallery item or record audio note", "ta": "புகைப்படம் அல்லது குரல் குறிப்பை இணைக்கவும்", "hi": "फोटो या वॉयस नोट संलग्न करें"},
+                success_message={"en": "Great! Photo attached to memory.", "ta": "மிக நன்று! புகைப்படம் இணைக்கப்பட்டது.", "hi": "बहुत बढ़िया! फोटो संलग्न हो गई।"},
+                help_message={"en": "Click '+ Add Photo / Media' in the Media section.", "ta": "ஊடகப் பிரிவில் உள்ள '+ Add Photo / Media' பொத்தானைக் கிளிக் செய்யவும்.", "hi": "मीडिया अनुभाग में '+ Add Photo / Media' पर क्लिक करें।"},
+                target_view="media",
+                target_control="btn-add-media",
+                expected_action=ActionType.ATTACH,
+                expected_resource_type=ResourceType.MEDIA,
+                transaction_expectation="MEDIA_ATTACH",
+                next_scene_id="SCENE_CREATE_MEMORY",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_CREATE_MEMORY",
+                scene_index=6,
+                title={"en": "Write a Memory Story", "ta": "ஒரு நினைவுக் கதையை எழுதுங்கள்", "hi": "एक स्मृति कहानी लिखें"},
+                instruction={"en": "Click + Write Memory Story to record a story.", "ta": "கதையைப் பதிவுசெய்ய + Write Memory Story என்பதைக் கிளிக் செய்யவும்.", "hi": "कहानी रिकॉर्ड करने के लिए + Write Memory Story पर क्लिक करें।"},
+                narration={"en": "Preserve your narrative in your own words.", "ta": "உங்கள் கதையை உங்கள் சொந்த சொற்களில் பாதுகாக்கவும்.", "hi": "अपनी कहानी को अपने शब्दों में सहेजें।"},
+                subtitle={"en": "Create narrative memory story linked to event", "ta": "நிகழ்வுடன் இணைக்கப்பட்ட நினைவுக் கதையை உருவாக்கவும்", "hi": "आयोजन से जुड़ी स्मृति कहानी बनाएं"},
+                success_message={"en": "Wonderful! Memory story recorded.", "ta": "அருமை! நினைவுக் கதை பதிவு செய்யப்பட்டது.", "hi": "अद्भुत! स्मृति कहानी दर्ज की गई।"},
+                help_message={"en": "Click '+ Write Memory Story' on the Memory Wall.", "ta": "நினைவுச் சுவரில் உள்ள '+ Write Memory Story' பொத்தானைக் கிளிக் செய்யவும்.", "hi": "मेमोरी वॉल पर '+ Write Memory Story' पर क्लिक करें।"},
+                target_view="memories",
+                target_control="btn-create-memory",
+                expected_action=ActionType.CREATE,
+                expected_resource_type=ResourceType.MEMORY,
+                transaction_expectation="MEMORY_CREATE",
+                next_scene_id="SCENE_CREATE_CELEBRATION",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_CREATE_CELEBRATION",
+                scene_index=7,
+                title={"en": "Celebration Studio", "ta": "கொண்டாட்டக்கூடம்", "hi": "सेलिब्रेशन स्टूडियो"},
+                instruction={"en": "Click CELEBRATIONS to view artifacts.", "ta": "கொண்டாட்டப் பொருட்களைப் பார்க்க CELEBRATIONS என்பதைக் கிளிக் செய்யவும்.", "hi": "उत्सव कलाकृतियों को देखने के लिए CELEBRATIONS पर क्लिक करें।"},
+                narration={"en": "Mayil transforms memories into celebration cards and albums.", "ta": "மயில் நினைவுகளைக் கொண்டாட்ட ஆல்பங்களாக மாற்றுகிறது.", "hi": "मयिल यादों को उत्सव एल्बम में बदल देता है।"},
+                subtitle={"en": "Derived celebration cards and family albums", "ta": "வாழ்த்து அட்டைகள் மற்றும் குடும்ப ஆல்பங்கள்", "hi": "ग्रीटिंग कार्ड और पारिवारिक एल्बम"},
+                success_message={"en": "Magical! Celebration artifact generated.", "ta": "அற்புதமான மாயாஜாலம்! கொண்டாட்ட ஆல்பம் உருவாக்கப்பட்டது.", "hi": "जादुई! उत्सव एल्बम तैयार किया गया।"},
+                help_message={"en": "Click CELEBRATIONS on the top navigation bar.", "ta": "மேல் வழிசெலுத்தல் பட்டியில் CELEBRATIONS என்பதைக் கிளிக் செய்யவும்.", "hi": "शीर्ष नेविगेशन बार पर CELEBRATIONS पर क्लिक करें।"},
+                target_view="celebrations",
+                target_control="nav-celebrations",
+                expected_action=ActionType.GENERATE,
+                expected_resource_type=ResourceType.CELEBRATION_ARTIFACT,
+                transaction_expectation="CELEBRATION_GENERATE",
+                next_scene_id="SCENE_SHARE_LINK",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_SHARE_LINK",
+                scene_index=8,
+                title={"en": "Sharing & Privacy", "ta": "பகிர்வு மற்றும் தனியுரிமை", "hi": "शेयरिंग और गोपनीयता"},
+                instruction={"en": "Click SHARING to create tokenized links.", "ta": "இணைப்புகளை உருவாக்க SHARING என்பதைக் கிளிக் செய்யவும்.", "hi": "लिंक बनाने के लिए SHARING पर क्लिक करें।"},
+                narration={"en": "Share securely with external family and friends.", "ta": "உறவினர்களுடன் பாதுகாப்பாகப் பகிருங்கள்.", "hi": "सुरक्षित रूप से बाहरी लोगों के साथ साझा करें।"},
+                subtitle={"en": "Tokenized share links and revocation controls", "ta": "பாதுகாப்பான பகிர்தல் இணைப்புகள் மற்றும் ரத்துசெய்தல்", "hi": "सुरक्षित शेयर लिंक और निरस्तीकरण नियंत्रण"},
+                success_message={"en": "Perfect! Share link generated.", "ta": "சிறப்பு! பகிர்வு இணைப்பு உருவாக்கப்பட்டது.", "hi": "उत्कृष्ट! शेयर लिंक तैयार किया गया।"},
+                help_message={"en": "Click SHARING on the top navigation bar.", "ta": "மேல் வழிசெலுத்தல் பட்டியில் SHARING என்பதைக் கிளிக் செய்யவும்.", "hi": "शीर्ष नेविगेशन बार पर SHARING पर क्लिक करें।"},
+                target_view="sharing",
+                target_control="nav-sharing",
+                expected_action=ActionType.SHARE,
+                expected_resource_type=ResourceType.SHARE_LINK,
+                transaction_expectation="SHARE_CREATE",
+                next_scene_id="SCENE_VIEW_HISTORY",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_VIEW_HISTORY",
+                scene_index=9,
+                title={"en": "Activity & Audit Memory", "ta": "செயல்பாட்டு மற்றும் தணிக்கை நினைவு", "hi": "गतिविधि और ऑडिट मेमोरी"},
+                instruction={"en": "Click ACTIVITY to view your journey log.", "ta": "உங்கள் வரலாற்றுப் பதிவைப் பார்க்க ACTIVITY என்பதைக் கிளிக் செய்யவும்.", "hi": "अपनी यात्रा देखने के लिए ACTIVITY पर क्लिक करें।"},
+                narration={"en": "Every action is logged in an immutable audit memory.", "ta": "ஒவ்வொரு செயலும் மாற்ற முடியாத தணிக்கை நினைவில் பதிவு செய்யப்படுகிறது.", "hi": "हर कार्य अपरिवर्तनीय ऑडिट मेमोरी में दर्ज होता है।"},
+                subtitle={"en": "Chronological audit memory feed and correlation chain", "ta": "காலவரிசைப்படி தணிக்கை வரலாற்றுப் பதிவு", "hi": "कालानुक्रमिक ऑडिट मेमोरी फ़ीड"},
+                success_message={"en": "Amazing! You are inspecting audit memory.", "ta": "அற்புதம்! நீங்கள் தணிக்கை நினைவை ஆய்வு செய்கிறீர்கள்.", "hi": "अद्भुत! आप ऑडिट मेमोरी का निरीक्षण कर रहे हैं।"},
+                help_message={"en": "Click ACTIVITY on the top navigation bar.", "ta": "மேல் வழிசெலுத்தல் பட்டியில் ACTIVITY என்பதைக் கிளிக் செய்யவும்.", "hi": "शीर्ष नेविगेशन बार पर ACTIVITY पर क्लिक करें।"},
+                target_view="history",
+                target_control="nav-history",
+                expected_action=ActionType.PERSPECTIVE_SWITCH,
+                expected_resource_type=ResourceType.GROUP_CONTEXT,
+                next_scene_id="SCENE_ASK_MAYIL",
+            ),
+            SceneDefinition(
+                scene_id="SCENE_ASK_MAYIL",
+                scene_index=10,
+                title={"en": "Mayil Explainability Audit", "ta": "மயிலின் விளக்க தணிக்கை", "hi": "मयिल स्पष्टीकरण ऑडिट"},
+                instruction={"en": "Click Ask Mayil to hear Mayil explain what you did.", "ta": "நீங்கள் செய்ததை மயில் விளக்குவதைக் கேட்க Ask Mayil என்பதைக் கிளிக் செய்யவும்.", "hi": "आपने जो किया उसे मयिल द्वारा समझाने के लिए Ask Mayil पर क्लिक करें।"},
+                narration={"en": "Mayil analyzes your journey history and answers questions.", "ta": "மயில் உங்கள் வரலாற்றை ஆய்வு செய்து கேள்விகளுக்குப் பதிலளிக்கிறது.", "hi": "मयिल आपकी यात्रा का विश्लेषण करता है और प्रश्नों का उत्तर देता है।"},
+                subtitle={"en": "Conversational explainability distinguishing facts vs state", "ta": "உண்மைகளையும் தற்போதைய நிலையையும் பிரித்து விவரிக்கும் உரையாடல்", "hi": "तथ्यों और स्थिति के बीच अंतर बताने वाला संवाद"},
+                success_message={"en": "Congratulations! You have completed the Mayil Learn-By-Doing Journey!", "ta": "வாழ்த்துக்கள்! நீங்கள் கற்றல் பயணத்தை வெற்றிகரமாக முடித்துவிட்டீர்கள்!", "hi": "बधाई हो! आपने मयिल लर्निंग जर्नी पूरी कर ली है!"},
+                help_message={"en": "Click the 'Ask Mayil' button on the page.", "ta": "'Ask Mayil' பொத்தானைக் கிளிக் செய்யவும்.", "hi": "'Ask Mayil' बटन पर क्लिक करें।"},
+                target_view="history",
+                target_control="btn-ask-mayil",
+                expected_action=ActionType.MAYIL_PROPOSAL,
+                expected_resource_type=ResourceType.MAYIL_INTERACTION,
+                next_scene_id=None,
+            ),
+        ]
+        return scenes
+
+    def validate_user_action(
+        self,
+        account_id: str,
+        action_type: ActionType,
+        control_id: str,
+        resource_id: str,
+        resource_label: str = "",
+        operation: str = "",
+    ) -> dict:
+        session = self.guided_sessions.get(account_id)
+        if not session:
+            return {"status": "error", "message": "No active guided session"}
+
+        scenes = self.get_shared_journey_scenes(session.context_type, session.language)
+        if session.current_scene_index >= len(scenes):
+            return {"status": "completed", "message": "Guided journey complete!"}
+
+        current_scene = scenes[session.current_scene_index]
+        is_correct = (control_id == current_scene.target_control or action_type == current_scene.expected_action)
+
+        lang_key = session.language.value if hasattr(session.language, "value") else str(session.language)
+
+        if is_correct:
+            # 1. Record authentic transaction if transaction service is available
+            tx_record = None
+            if self.transaction_service:
+                tx_record = self.transaction_service.record_transaction(
+                    actor_account_id=account_id,
+                    family_context_id=session.family_context_id,
+                    action_type=action_type,
+                    resource_type=current_scene.expected_resource_type,
+                    resource_id=resource_id or current_scene.scene_id,
+                    resource_label_snapshot=resource_label or current_scene.title.get(lang_key, "Exercise Action"),
+                    operation=operation or current_scene.instruction.get(lang_key, "Completed exercise"),
+                    source="learn_by_doing_exercise",
+                )
+                session.last_transaction_id = tx_record.transaction_id
+
+            if current_scene.scene_id not in session.completed_scene_ids:
+                session.completed_scene_ids.append(current_scene.scene_id)
+
+            session.attempts = 0
+            session.current_scene_index += 1
+            is_journey_complete = session.current_scene_index >= len(scenes)
+
+            next_sc = scenes[session.current_scene_index] if not is_journey_complete else None
+
+            return {
+                "status": "success",
+                "message": current_scene.success_message.get(lang_key, "Great job!"),
+                "is_journey_complete": is_journey_complete,
+                "current_scene": current_scene.__dict__,
+                "next_scene": next_sc.__dict__ if next_sc else None,
+                "session_state": session.__dict__,
+                "transaction_recorded": tx_record.transaction_id if tx_record else None,
+            }
+        else:
+            session.attempts += 1
+            return {
+                "status": "wrong_action",
+                "message": f"That's okay 😊. For this exercise, please click '{current_scene.target_control}'",
+                "help_message": current_scene.help_message.get(lang_key, "Please follow Mayil's guide."),
+                "target_control": current_scene.target_control,
+                "current_scene": current_scene.__dict__,
+                "session_state": session.__dict__,
+            }
+
+    def switch_mode(self, account_id: str, new_mode: GuideMode) -> GuideSessionState:
+        session = self.guided_sessions.get(account_id)
+        if session:
+            session.current_mode = new_mode
+            session.updated_at = datetime.datetime.utcnow()
+        return session
+
+    def reset_guided_session(self, account_id: str) -> GuideSessionState:
+        session = self.guided_sessions.get(account_id)
+        if session:
+            session.current_scene_index = 0
+            session.attempts = 0
+            session.completed_scene_ids.clear()
+            session.created_resource_ids.clear()
+            session.last_transaction_id = None
+            session.updated_at = datetime.datetime.utcnow()
+        return session
+
+    def get_or_create_practice_world(
+        self,
+        account_id: str,
+        family_context_id: str,
+        context_type: ContextType = ContextType.FAMILY,
+        age_group: AgeGroup = AgeGroup.MIXED,
+        include_family: bool = True,
+        language: Language = Language.ENGLISH,
+    ) -> MayilPracticeWorld:
+        if not hasattr(self, "practice_worlds"):
+            self.practice_worlds: Dict[str, MayilPracticeWorld] = {}
+
+        pw = self.practice_worlds.get(account_id)
+        if not pw or not pw.is_active:
+            pw = MayilPracticeWorld(
+                account_id=account_id,
+                family_context_id=family_context_id,
+                is_active=True,
+                context_type=context_type,
+                age_group=age_group,
+                include_family=include_family,
+                language=language,
+            )
+            self._seed_practice_world_data(pw)
+            self.practice_worlds[account_id] = pw
+        return pw
+
+    def _seed_practice_world_data(self, pw: MayilPracticeWorld) -> None:
+        pw.simulated_persons.clear()
+        pw.simulated_events.clear()
+        pw.simulated_memories.clear()
+        pw.simulated_media_items.clear()
+        pw.simulated_celebrations.clear()
+        pw.simulated_reminders.clear()
+        pw.simulated_share_links.clear()
+        pw.simulated_transactions.clear()
+
+        # Seed Persons based on context
+        if pw.context_type == ContextType.FAMILY:
+            pw.simulated_persons = [
+                {"id": "sim_p1", "name": "Alice", "role": "Mom", "avatar": "👩"},
+                {"id": "sim_p2", "name": "Bob", "role": "Dad", "avatar": "👨"},
+                {"id": "sim_p3", "name": "Charlie", "role": "Son", "avatar": "👦"},
+                {"id": "sim_p4", "name": "Diana", "role": "Daughter", "avatar": "👧"},
+                {"id": "sim_p5", "name": "Grandma Mary", "role": "Grandmother", "avatar": "👵"},
+            ]
+        elif pw.context_type == ContextType.FRIENDS:
+            pw.simulated_persons = [
+                {"id": "sim_p1", "name": "Sam", "role": "Friend", "avatar": "👱"},
+                {"id": "sim_p2", "name": "Alex", "role": "Friend", "avatar": "🧔"},
+                {"id": "sim_p3", "name": "Maya", "role": "Friend", "avatar": "👩‍🦱"},
+            ]
+            if pw.include_family:
+                pw.simulated_persons.append({"id": "sim_p4", "name": "Alice (Mom)", "role": "Family", "avatar": "👩"})
+        else:
+            pw.simulated_persons = [
+                {"id": "sim_p1", "name": "Elena (Lead)", "role": "Organizer", "avatar": "👩‍💼"},
+                {"id": "sim_p2", "name": "Raj (Coordinator)", "role": "Volunteer", "avatar": "👨‍💼"},
+            ]
+            if pw.include_family:
+                pw.simulated_persons.append({"id": "sim_p3", "name": "Bob (Dad)", "role": "Family Volunteer", "avatar": "👨"})
+
+        # Seed initial simulated events
+        pw.simulated_events = [
+            {
+                "id": "sim_ev1",
+                "title": "Alice's Birthday Dinner" if pw.context_type == ContextType.FAMILY else "Group Reunion",
+                "date": "2026-08-20",
+                "status": "UPCOMING",
+                "description": "Celebration dinner with special cake and song.",
+            },
+            {
+                "id": "sim_ev2",
+                "title": "Weekend Getaway",
+                "date": "2026-08-25",
+                "status": "UPCOMING",
+                "description": "Fun weekend trip together.",
+            },
+        ]
+
+        # Seed initial simulated memories
+        pw.simulated_memories = [
+            {
+                "id": "sim_mem1",
+                "title": "Birthday Cake Surprise",
+                "summary": "Joyful moment when blowing out candles.",
+                "ref_event_id": "sim_ev1",
+            }
+        ]
+
+        # Seed initial simulated media
+        pw.simulated_media_items = [
+            {"id": "sim_med1", "caption": "Cake Photo", "type": "PHOTO", "url": "/static/demo_cake.jpg"}
+        ]
+
+        # Seed initial simulated celebration
+        pw.simulated_celebrations = [
+            {"id": "sim_cel1", "title": "Birthday Celebration Card", "theme": "GOLDEN_JOY"}
+        ]
+
+        # Seed initial simulated reminder
+        pw.simulated_reminders = [
+            {"id": "sim_rem1", "title": "Buy Birthday Gift", "due_date": "2026-08-19"}
+        ]
+
+        # Seed initial simulated share link
+        pw.simulated_share_links = [
+            {"id": "sim_sh1", "token": "sim_share_token_123", "target_type": "EVENT", "target_id": "sim_ev1"}
+        ]
+
+        # Seed initial practice transaction record
+        pw.simulated_transactions.append({
+            "transaction_id": "sim_tx_001",
+            "action_type": "PRACTICE_WORLD_INITIALIZED",
+            "resource_type": "PRACTICE_WORLD",
+            "resource_id": pw.session_id,
+            "resource_label": f"Practice World ({pw.context_type.value})",
+            "details": "Initialized isolated Mayil Practice World training sandbox.",
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "is_practice": True,
+            "audit_type": "PRACTICE WORLD ACTIVITY",
+        })
+
+    def execute_simulated_action(
+        self,
+        account_id: str,
+        action_type: ActionType,
+        control_id: str,
+        resource_type: ResourceType = ResourceType.EVENT,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        pw = self.practice_worlds.get(account_id)
+        if not pw or not pw.is_active:
+            pw = self.get_or_create_practice_world(account_id, "sim_fc_001")
+
+        session = self.guided_sessions.get(account_id)
+        if not session:
+            session = self.initialize_session(account_id, "sim_fc_001")
+
+        scenes = self.get_shared_journey_scenes(session.context_type)
+        current_scene = scenes[session.current_scene_index]
+        lang_key = session.language.value.lower()
+
+        payload = payload or {}
+        new_resource_id = f"sim_res_{len(pw.simulated_transactions)+1:03d}"
+
+        # Perform simulated sandbox mutation (Zero Real Canonical Mutation)
+        if action_type in (ActionType.CREATE, ActionType.PERSPECTIVE_SWITCH) and resource_type == ResourceType.EVENT:
+            pw.simulated_events.append({
+                "id": new_resource_id,
+                "title": payload.get("title", "Simulated Family Event"),
+                "date": payload.get("date", "2026-08-22"),
+                "status": "UPCOMING",
+                "description": payload.get("description", "Simulated practice event"),
+            })
+        elif action_type in (ActionType.CREATE, ActionType.ATTACH) and resource_type == ResourceType.MEMORY:
+            pw.simulated_memories.append({
+                "id": new_resource_id,
+                "title": payload.get("title", "Simulated Memory"),
+                "summary": payload.get("summary", "A beautiful simulated moment."),
+                "ref_event_id": payload.get("ref_event_id", "sim_ev1"),
+            })
+        elif action_type in (ActionType.ATTACH, ActionType.CREATE) and resource_type in (ResourceType.MEDIA, ResourceType.MEDIA_ALBUM):
+            pw.simulated_media_items.append({
+                "id": new_resource_id,
+                "caption": payload.get("caption", "Simulated Media Photo"),
+                "type": payload.get("type", "PHOTO"),
+                "url": payload.get("url", "/static/demo_sim_media.jpg"),
+            })
+        elif action_type in (ActionType.CREATE, ActionType.GENERATE) and resource_type == ResourceType.CELEBRATION_ARTIFACT:
+            pw.simulated_celebrations.append({
+                "id": new_resource_id,
+                "title": payload.get("title", "Simulated Celebration Card"),
+                "theme": payload.get("theme", "FESTIVE"),
+            })
+        elif action_type in (ActionType.CREATE, ActionType.REMINDER_CREATE) and resource_type == ResourceType.REMINDER:
+            pw.simulated_reminders.append({
+                "id": new_resource_id,
+                "title": payload.get("title", "Simulated Reminder"),
+                "due_date": payload.get("due_date", "2026-08-21"),
+            })
+        elif action_type in (ActionType.CREATE, ActionType.SHARE) and resource_type == ResourceType.SHARE_LINK:
+            pw.simulated_share_links.append({
+                "id": new_resource_id,
+                "token": f"sim_share_{new_resource_id}",
+                "target_type": resource_type.value,
+                "target_id": payload.get("target_id", "sim_ev1"),
+            })
+
+        # Append simulated transaction record
+        tx_id = f"sim_tx_{len(pw.simulated_transactions)+1:03d}"
+        sim_tx = {
+            "transaction_id": tx_id,
+            "action_type": action_type.value,
+            "resource_type": resource_type.value,
+            "resource_id": new_resource_id,
+            "resource_label": payload.get("title") or payload.get("caption") or control_id,
+            "details": f"Simulated practice action: {action_type.value} on control '{control_id}'",
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "is_practice": True,
+            "audit_type": "PRACTICE WORLD ACTIVITY",
+        }
+        pw.simulated_transactions.append(sim_tx)
+
+        # Update guide session state
+        session.completed_scene_ids.append(current_scene.scene_id)
+        session.created_resource_ids.append(new_resource_id)
+        session.last_transaction_id = tx_id
+        session.attempts = 0
+        session.current_scene_index += 1
+
+        is_journey_complete = session.current_scene_index >= len(scenes)
+        next_sc = scenes[session.current_scene_index] if not is_journey_complete else None
+
+        explanation = f"You just executed '{action_type.value}' in Mayil's Practice World. FEMC recorded this as a safe simulated transaction."
+
+        return {
+            "status": "success",
+            "message": current_scene.success_message.get(lang_key, "Great job!"),
+            "explanation": explanation,
+            "is_journey_complete": is_journey_complete,
+            "current_scene": current_scene.__dict__,
+            "next_scene": next_sc.__dict__ if next_sc else None,
+            "session_state": session.__dict__,
+            "practice_world": pw.__dict__,
+            "simulated_transaction": sim_tx,
+        }
+
+    def explain_practice_history(self, account_id: str) -> Dict[str, Any]:
+        pw = self.practice_worlds.get(account_id)
+        if not pw:
+            return {"status": "error", "message": "No active practice world found."}
+
+        history_summary = []
+        for tx in pw.simulated_transactions:
+            history_summary.append(
+                f"[{tx.get('timestamp')[:19]}] {tx.get('action_type')}: {tx.get('resource_label')} ({tx.get('audit_type')})"
+            )
+
+        return {
+            "status": "success",
+            "audit_type": "PRACTICE WORLD ACTIVITY",
+            "transaction_count": len(pw.simulated_transactions),
+            "simulated_transactions": pw.simulated_transactions,
+            "mayil_explanation": (
+                f"In Mayil's Practice World, you have performed {len(pw.simulated_transactions)} safe training actions. "
+                "All actions remain strictly isolated in the practice sandbox and have zero effect on your real family data."
+            ),
+            "history_summary": history_summary,
+        }
+
+    def reset_practice_world(self, account_id: str) -> MayilPracticeWorld:
+        pw = self.practice_worlds.get(account_id)
+        if pw:
+            self._seed_practice_world_data(pw)
+            pw.updated_at = datetime.datetime.utcnow()
+        session = self.guided_sessions.get(account_id)
+        if session:
+            self.reset_guided_session(account_id)
+        return pw or self.get_or_create_practice_world(account_id, "sim_fc_001")
+
+    def exit_practice_world(self, account_id: str) -> Dict[str, Any]:
+        pw = self.practice_worlds.get(account_id)
+        if pw:
+            pw.is_active = False
+            pw.updated_at = datetime.datetime.utcnow()
+        return {
+            "status": "exited",
+            "message": "Practice complete. Your real FEMC data was not changed.",
+            "is_practice_active": False,
+        }
 

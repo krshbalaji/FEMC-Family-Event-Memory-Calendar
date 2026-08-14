@@ -54,6 +54,68 @@ def generate_media_download_filename(caption: str, media_type: str, date_str: st
 
 
 class DemoState:
+
+    def seed_demo_transactions(self):
+        sess_id = self.session_alice.session_id
+        fc_id = self.family_context.id
+        cid = "demo-journey-chain-1"
+
+        from ENGINEERING.source.femc.models import ActionType, ResourceType, VisibilityLevel
+
+        # 1. Add Person
+        self.api.record_transaction_for_session(
+            session_id=sess_id, family_context_id=fc_id, action_type=ActionType.CREATE,
+            resource_type=ResourceType.PERSON, resource_id=self.p_alice.id,
+            resource_label_snapshot="Alice Smith", operation="Added Alice Smith to family group",
+            correlation_id=cid
+        )
+        # 2. Schedule Event
+        if hasattr(self, 'event1') and self.event1:
+            self.api.record_transaction_for_session(
+                session_id=sess_id, family_context_id=fc_id, action_type=ActionType.CREATE,
+                resource_type=ResourceType.EVENT, resource_id=self.event1.id,
+                resource_label_snapshot="Grandma's 80th Birthday", operation="Scheduled family birthday dinner for Aug 20",
+                correlation_id=cid
+            )
+        # 3. Attach Photos
+        if hasattr(self, 'media1') and self.media1:
+            self.api.record_transaction_for_session(
+                session_id=sess_id, family_context_id=fc_id, action_type=ActionType.ATTACH,
+                resource_type=ResourceType.MEDIA, resource_id=self.media1.id,
+                resource_label_snapshot="Birthday Cake & Candles Photo", operation="Attached photo to Grandma's 80th Birthday",
+                correlation_id=cid
+            )
+        # 4. Create Memory Story
+        if hasattr(self, 'memory1') and self.memory1:
+            self.api.record_transaction_for_session(
+                session_id=sess_id, family_context_id=fc_id, action_type=ActionType.CREATE,
+                resource_type=ResourceType.MEMORY, resource_id=self.memory1.id,
+                resource_label_snapshot="Grandma's Birthday Dinner", operation="Created narrative memory story with 3 attached photos",
+                correlation_id=cid
+            )
+        # 5. Generate Celebration Album
+        self.api.record_transaction_for_session(
+            session_id=sess_id, family_context_id=fc_id, action_type=ActionType.GENERATE,
+            resource_type=ResourceType.CELEBRATION_ARTIFACT, resource_id="artifact-album-1",
+            resource_label_snapshot="Grandma 80th Birthday Album", operation="Generated Celebration Album derived artifact",
+            correlation_id=cid
+        )
+        # 6. Share Link
+        if hasattr(self, 'share_link1') and self.share_link1:
+            self.api.record_transaction_for_session(
+                session_id=sess_id, family_context_id=fc_id, action_type=ActionType.SHARE,
+                resource_type=ResourceType.SHARE_LINK, resource_id=self.share_link1.token,
+                resource_label_snapshot="Share Link for Birthday Event", operation="Generated tokenized public share link",
+                correlation_id=cid
+            )
+        # 7. Revoke Share Link
+        self.api.record_transaction_for_session(
+            session_id=sess_id, family_context_id=fc_id, action_type=ActionType.REVOKE_SHARE,
+            resource_type=ResourceType.SHARE_LINK, resource_id="revoked-token-sample",
+            resource_label_snapshot="Share Link for Family Album", operation="Revoked share link by user request",
+            correlation_id=cid
+        )
+
     def __init__(self):
         self.api = None
         self.reset()
@@ -338,34 +400,117 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         body { background-color: var(--bg-dark); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; }
 
-        header { background: #1e293b; border-bottom: 1px solid var(--card-border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        header { background: #1e293b; border-bottom: 1px solid var(--card-border); padding: 0.85rem 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; }
         .logo { font-size: 1.25rem; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 0.5rem; }
         .logo-badge { background: var(--accent); color: #000; font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 800; }
 
-        .user-panel { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-        .perspective-box { display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.2); padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--card-border); }
+        .user-panel { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+        .perspective-box { display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.3); padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--card-border); }
         .perspective-label { font-size: 0.8rem; color: var(--text-sub); font-weight: 600; }
         .perspective-select { background: transparent; color: var(--text-main); border: none; font-size: 0.85rem; font-weight: 600; cursor: pointer; outline: none; }
         .perspective-select option { background: var(--card-bg); color: var(--text-main); }
 
-        nav { background: #0f172a; border-bottom: 1px solid var(--card-border); padding: 0 2rem; display: flex; gap: 1rem; overflow-x: auto; }
-        .nav-link { color: var(--text-sub); text-decoration: none; padding: 0.85rem 1rem; font-size: 0.9rem; font-weight: 500; border-bottom: 2px solid transparent; transition: all 0.2s; cursor: pointer; white-space: nowrap; }
-        .nav-link:hover { color: var(--text-main); }
-        .nav-link.active { color: var(--accent); border-bottom-color: var(--accent); }
-        .nav-link.highlight { background: rgba(56, 189, 248, 0.2); border-radius: 4px; color: var(--accent); }
+        /* Reconstructed Coherent Application Ribbon */
+        .femc-ribbon {
+            background: #111827;
+            border-bottom: 1px solid var(--card-border);
+            padding: 0.5rem 1.25rem;
+            display: flex;
+            gap: 0.4rem;
+            overflow-x: auto;
+            align-items: center;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+        }
 
-        main { flex: 1; padding: 2rem; max-width: 1200px; margin: 0 auto; width: 100%; }
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-sub);
+            text-decoration: none;
+            padding: 0.45rem 0.75rem;
+            border-radius: 8px;
+            background: rgba(30, 41, 59, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.2s ease-in-out;
+            cursor: pointer;
+            white-space: nowrap;
+            user-select: none;
+            outline: none;
+        }
+
+        .nav-link:hover {
+            color: var(--text-main);
+            background: rgba(56, 189, 248, 0.1);
+            border-color: rgba(56, 189, 248, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .nav-link:focus-visible {
+            box-shadow: 0 0 0 2px var(--accent);
+        }
+
+        .nav-link.active {
+            color: var(--text-main);
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.25) 0%, rgba(192, 132, 252, 0.2) 100%);
+            border: 1px solid var(--accent);
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+        }
+
+        .nav-link.highlight {
+            background: rgba(244, 114, 182, 0.25);
+            border-color: var(--pink);
+            color: #fff;
+            animation: pulseGlow 1.5s infinite alternate;
+        }
+
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 4px var(--pink); }
+            100% { box-shadow: 0 0 14px var(--pink); }
+        }
+
+        .nav-icon {
+            font-size: 1.1rem;
+            line-height: 1;
+        }
+
+        .nav-text {
+            display: flex;
+            flex-direction: column;
+            text-align: left;
+        }
+
+        .nav-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            line-height: 1.2;
+        }
+
+        .nav-subtitle {
+            font-size: 0.68rem;
+            color: var(--text-sub);
+            font-weight: 500;
+            line-height: 1.1;
+        }
+
+        .nav-link.active .nav-subtitle {
+            color: var(--accent);
+        }
+
+        main { flex: 1; padding: 1.75rem 1.5rem; max-width: 1240px; margin: 0 auto; width: 100%; }
 
         .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
-        .section-title { font-size: 1.5rem; font-weight: 700; color: var(--text-main); }
-        .section-subtitle { font-size: 0.875rem; color: var(--text-sub); margin-top: 0.25rem; }
+        .section-title { font-size: 1.4rem; font-weight: 700; color: var(--text-main); }
+        .section-subtitle { font-size: 0.85rem; color: var(--text-sub); margin-top: 0.2rem; }
 
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-        .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 1.25rem; position: relative; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.25rem; margin-bottom: 1.5rem; }
+        .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 1.25rem; position: relative; }
         .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
         .card-title { font-size: 1rem; font-weight: 600; color: var(--text-main); }
 
-        .pill { font-size: 0.75rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 9999px; text-transform: uppercase; }
+        .pill { font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 9999px; text-transform: uppercase; }
         .pill-birthday { background: rgba(244, 114, 182, 0.2); color: var(--pink); border: 1px solid var(--pink); }
         .pill-anniversary { background: rgba(192, 132, 252, 0.2); color: var(--purple); border: 1px solid var(--purple); }
         .pill-milestone { background: rgba(251, 191, 36, 0.2); color: var(--amber); border: 1px solid var(--amber); }
@@ -374,27 +519,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .pill-private { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #f87171; }
 
         .item-list { display: flex; flex-direction: column; gap: 0.75rem; }
-        .item-row { background: rgba(15, 23, 42, 0.6); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.05); display: flex; justify-content: space-between; align-items: center; }
+        .item-row { background: rgba(15, 23, 42, 0.6); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.05); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
         .item-main { font-size: 0.9rem; font-weight: 600; color: var(--text-main); }
         .item-sub { font-size: 0.8rem; color: var(--text-sub); margin-top: 0.2rem; }
 
         /* Media Gallery & Player Grid */
-        .media-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; margin-top: 0.75rem; }
-        .media-thumb { background: #0f172a; border-radius: 8px; overflow: hidden; border: 1px solid var(--card-border); text-align: left; display: flex; flex-direction: column; justify-content: space-between; }
-        .media-thumb img { width: 100%; height: 140px; object-fit: cover; display: block; cursor: pointer; }
-        .media-caption { font-size: 0.85rem; font-weight: 600; color: var(--text-main); padding: 0.5rem 0.6rem 0.2rem 0.6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .media-actions { display: flex; gap: 0.3rem; padding: 0.5rem 0.6rem; background: rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.05); }
+        .media-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; margin-top: 0.75rem; }
+        .media-card { background: #0f172a; border-radius: 8px; overflow: hidden; border: 1px solid var(--card-border); text-align: left; display: flex; flex-direction: column; justify-content: space-between; }
+        .media-card img { width: 100%; height: 150px; object-fit: cover; display: block; }
+        .audio-waveform-box { background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%); padding: 1.25rem 1rem; height: 150px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-bottom: 1px solid var(--card-border); }
+        .audio-waveform-visual { display: flex; gap: 3px; align-items: center; margin-bottom: 0.75rem; height: 30px; }
+        .waveform-bar { width: 4px; background: var(--pink); border-radius: 2px; animation: wavePulse 1.2s infinite ease-in-out alternate; }
+        @keyframes wavePulse { 0% { height: 6px; } 100% { height: 28px; } }
+        .media-caption { font-size: 0.85rem; font-weight: 600; color: var(--text-main); padding: 0.6rem 0.6rem 0.2rem 0.6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .media-meta { font-size: 0.75rem; color: var(--text-sub); padding: 0 0.6rem 0.5rem 0.6rem; }
+        .media-actions { display: flex; gap: 0.3rem; padding: 0.5rem 0.6rem; background: rgba(0,0,0,0.25); border-top: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
 
-        .btn { background: var(--accent); color: #0f172a; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: opacity 0.2s; display: inline-flex; align-items: center; gap: 0.4rem; }
+        .btn { background: var(--accent); color: #0f172a; border: none; padding: 0.45rem 0.9rem; border-radius: 6px; font-weight: 600; font-size: 0.82rem; cursor: pointer; transition: opacity 0.2s; display: inline-flex; align-items: center; gap: 0.35rem; }
         .btn:hover { opacity: 0.9; }
         .btn-outline { background: transparent; color: var(--text-main); border: 1px solid var(--card-border); }
         .btn-outline:hover { background: rgba(255,255,255,0.05); }
         .btn-pink { background: var(--pink); color: #000; }
         .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
-
-        details { margin-top: 2rem; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 1rem; }
-        summary { font-size: 0.9rem; font-weight: 600; color: var(--text-sub); cursor: pointer; }
-        pre { font-family: monospace; font-size: 0.8rem; color: var(--accent); margin-top: 1rem; overflow-x: auto; background: #0f172a; padding: 1rem; border-radius: 6px; }
 
         /* Modal Styles */
         .modal-overlay { position: fixed; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
@@ -430,8 +576,58 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         @keyframes mayilPulse { 0% { transform: scale(1); filter: drop-shadow(0 0 4px #f472b6); } 50% { transform: scale(1.1); filter: drop-shadow(0 0 16px #f472b6); } 100% { transform: scale(1); filter: drop-shadow(0 0 4px #f472b6); } }
         @keyframes mayilSpin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes mayilBounce { 0% { transform: translateY(0); } 100% { transform: translateY(-8px); } }
-    </style>
-</head>
+
+        @media (max-width: 900px) {
+            .nav-subtitle { display: none; }
+            .femc-ribbon { padding: 0.4rem 0.75rem; }
+            .nav-link { padding: 0.4rem 0.6rem; }
+        }
+
+        .practice-world-banner {
+            background: linear-gradient(135deg, #4c1d95 0%, #1e1b4b 100%);
+            border: 2px solid var(--pink);
+            box-shadow: 0 0 20px rgba(244, 114, 182, 0.4);
+            color: #ffffff;
+            padding: 0.75rem 1.25rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .target-glow {
+            border: 2px solid var(--pink) !important;
+            box-shadow: 0 0 15px var(--pink), 0 0 25px rgba(244, 114, 182, 0.4) !important;
+            animation: pulseGlow 1.2s infinite alternate !important;
+            position: relative;
+            z-index: 100;
+        }
+
+        .mayil-guide-banner {
+            background: linear-gradient(135deg, #1e1b4b 0%, #311b92 100%);
+            border: 1px solid var(--purple);
+            border-radius: 12px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            box-shadow: 0 4px 20px rgba(192, 132, 252, 0.25);
+        }
+        .mayil-avatar-glow {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent), var(--pink));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            box-shadow: 0 0 12px var(--pink);
+        }
+    </style></head>
 <body>
     <header>
         <div class="logo">
@@ -450,17 +646,84 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
     </header>
 
-    <nav>
-        <a id="nav-home" class="nav-link active" onclick="loadView('home', event)">🏠 HOME</a>
-        <a id="nav-family" class="nav-link" onclick="loadView('family', event)">👨‍👩‍👧‍👦 FAMILY</a>
-        <a id="nav-calendar" class="nav-link" onclick="loadView('calendar', event)">📅 CALENDAR</a>
-        <a id="nav-memories" class="nav-link" onclick="loadView('memories', event)">📖 MEMORIES & MEDIA</a>
-        <a id="nav-celebrations" class="nav-link" onclick="loadView('celebrations', event)">🎉 CELEBRATIONS</a>
-        <a id="nav-reminders" class="nav-link" onclick="loadView('reminders', event)">🔔 REMINDERS</a>
-        <a id="nav-mayil" class="nav-link" onclick="loadView('mayil', event)">🧠 MAYIL AI</a>
-        <a id="nav-guardian" class="nav-link" onclick="loadView('guardian', event)">🛡️ GUARDIAN</a>
-        <a id="nav-sharing" class="nav-link" onclick="loadView('sharing', event)">🔗 SHARING</a>
-        <a id="nav-settings" class="nav-link" onclick="loadView('settings', event)">⚙️ SETTINGS / DATA</a>
+    <nav class="femc-ribbon" aria-label="Main Navigation">
+        <a id="nav-home" class="nav-link active" tabindex="0" onclick="loadView('home', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('home', event)">
+            <span class="nav-icon">🏠</span>
+            <div class="nav-text">
+                <span class="nav-title">HOME</span>
+                <span class="nav-subtitle">Overview</span>
+            </div>
+        </a>
+        <a id="nav-family" class="nav-link" tabindex="0" onclick="loadView('family', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('family', event)">
+            <span class="nav-icon">👨‍👩‍👧‍👦</span>
+            <div class="nav-text">
+                <span class="nav-title">FAMILY</span>
+                <span class="nav-subtitle">Our Family & Group</span>
+            </div>
+        </a>
+        <a id="nav-calendar" class="nav-link" tabindex="0" onclick="loadView('calendar', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('calendar', event)">
+            <span class="nav-icon">📅</span>
+            <div class="nav-text">
+                <span class="nav-title">CALENDAR</span>
+                <span class="nav-subtitle">Events & Plans</span>
+            </div>
+        </a>
+        <a id="nav-memories" class="nav-link" tabindex="0" onclick="loadView('memories', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('memories', event)">
+            <span class="nav-icon">📖</span>
+            <div class="nav-text">
+                <span class="nav-title">MEMORIES & MEDIA</span>
+                <span class="nav-subtitle">Photos, Videos, Audio</span>
+            </div>
+        </a>
+        <a id="nav-celebrations" class="nav-link" tabindex="0" onclick="loadView('celebrations', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('celebrations', event)">
+            <span class="nav-icon">🎉</span>
+            <div class="nav-text">
+                <span class="nav-title">CELEBRATIONS</span>
+                <span class="nav-subtitle">Studio & Albums</span>
+            </div>
+        </a>
+        <a id="nav-reminders" class="nav-link" tabindex="0" onclick="loadView('reminders', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('reminders', event)">
+            <span class="nav-icon">🔔</span>
+            <div class="nav-text">
+                <span class="nav-title">REMINDERS</span>
+                <span class="nav-subtitle">Alerts & Tasks</span>
+            </div>
+        </a>
+        <a id="nav-mayil" class="nav-link" tabindex="0" onclick="loadView('mayil', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('mayil', event)">
+            <span class="nav-icon">🧠</span>
+            <div class="nav-text">
+                <span class="nav-title">MAYIL AI</span>
+                <span class="nav-subtitle">Smart Assistant</span>
+            </div>
+        </a>
+        <a id="nav-guardian" class="nav-link" tabindex="0" onclick="loadView('guardian', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('guardian', event)">
+            <span class="nav-icon">🛡️</span>
+            <div class="nav-text">
+                <span class="nav-title">GUARDIAN</span>
+                <span class="nav-subtitle">Privacy & Safety</span>
+            </div>
+        </a>
+        <a id="nav-sharing" class="nav-link" tabindex="0" onclick="loadView('sharing', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('sharing', event)">
+            <span class="nav-icon">🔗</span>
+            <div class="nav-text">
+                <span class="nav-title">SHARING</span>
+                <span class="nav-subtitle">Share & Connect</span>
+            </div>
+        </a>
+        <a id="nav-history" class="nav-link" tabindex="0" onclick="loadView('history', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('history', event)">
+            <span class="nav-icon">🕘</span>
+            <div class="nav-text">
+                <span class="nav-title">ACTIVITY</span>
+                <span class="nav-subtitle">Audit & History</span>
+            </div>
+        </a>
+        <a id="nav-settings"  class="nav-link" tabindex="0" onclick="loadView('settings', event)" onkeydown="if(event.key==='Enter'||event.key===' ')loadView('settings', event)">
+            <span class="nav-icon">⚙️</span>
+            <div class="nav-text">
+                <span class="nav-title">SETTINGS / DATA</span>
+                <span class="nav-subtitle">Export & More</span>
+            </div>
+        </a>
     </nav>
 
     <main id="content-area">
@@ -564,24 +827,175 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             setActiveNav(viewName);
             const content = document.getElementById('content-area');
             if (!content) return;
-            content.innerHTML = '<div style="text-align:center; padding:3rem; color:var(--text-sub);">Loading family data...</div>';
+            content.innerHTML = `
+                <div style="text-align:center; padding:4rem 2rem; color:var(--text-sub);">
+                    <div style="font-size:2rem; margin-bottom:0.75rem; animation: pulseGlow 1s infinite alternate;">⏳</div>
+                    <div style="font-size:1.1rem; font-weight:600; color:var(--text-main);">Loading family data...</div>
+                    <div style="font-size:0.85rem; color:var(--text-sub); margin-top:0.25rem;">Fetching authorized views for ${viewName.toUpperCase()}</div>
+                </div>
+            `;
 
-            if (viewName === 'home') await renderHome(content);
-            else if (viewName === 'family') await renderFamily(content);
-            else if (viewName === 'calendar') await renderCalendar(content);
-            else if (viewName === 'memories') await renderMemories(content);
-            else if (viewName === 'celebrations') await renderCelebrations(content);
-            else if (viewName === 'reminders') await renderReminders(content);
-            else if (viewName === 'mayil') await renderMayil(content);
-            else if (viewName === 'guardian') await renderGuardian(content);
-            else if (viewName === 'sharing') await renderSharing(content);
+            try {
+                if (viewName === 'home') await renderHome(content);
+                else if (viewName === 'family') await renderFamily(content);
+                else if (viewName === 'calendar') await renderCalendar(content);
+                else if (viewName === 'memories') await renderMemories(content);
+                else if (viewName === 'celebrations') await renderCelebrations(content);
+                else if (viewName === 'reminders') await renderReminders(content);
+                else if (viewName === 'mayil') await renderMayil(content);
+                else if (viewName === 'guardian') await renderGuardian(content);
+                else if (viewName === 'sharing') await renderSharing(content);
+                else if (viewName === 'history') await renderHistory(content);
             else if (viewName === 'settings') await renderSettings(content);
-            else await renderHome(content);
+                else await renderHome(content);
+            } catch (err) {
+                console.error("View rendering error:", err);
+                content.innerHTML = `
+                    <div class="card" style="text-align:center; padding:3rem 2rem; border-color:#f87171; max-width:600px; margin:2rem auto;">
+                        <div style="font-size:2.5rem; margin-bottom:0.5rem;">⚠️</div>
+                        <div class="card-title" style="color:#f87171; font-size:1.25rem; margin-bottom:0.5rem;">Unable to load screen data</div>
+                        <div style="font-size:0.88rem; color:var(--text-sub); margin-bottom:1.5rem; line-height:1.5;">
+                            An unexpected error occurred while loading contents for <strong>${viewName.toUpperCase()}</strong>.<br/>
+                            <span style="font-family:monospace; font-size:0.78rem; color:#f87171;">${err.message || err}</span>
+                        </div>
+                        <button class="btn" onclick="loadView('${viewName}')">🔄 Retry Loading ${viewName.toUpperCase()}</button>
+                    </div>
+                `;
+            }
         }
 
         // ==========================================
         // VIEW RENDERERS (10 CORE PILLARS)
         // ==========================================
+
+        async function openResourceHistoryModal(resType, resId) {
+            const modal = document.getElementById('modal-container');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            modal.innerHTML = `
+                <div class="modal-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid var(--card-border); padding-bottom:0.5rem;">
+                        <h2 style="font-size:1.1rem; color:var(--accent);">🕘 Resource History & Audit</h2>
+                        <button class="btn btn-outline btn-sm" onclick="closeModal()">✕</button>
+                    </div>
+                    <div style="text-align:center; padding:2rem; color:var(--text-sub);">Loading resource history...</div>
+                </div>
+            `;
+            try {
+                const data = await fetchAPI(`/api/resource_history?type=${resType}&id=${resId}`);
+                modal.innerHTML = `
+                    <div class="modal-card">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid var(--card-border); padding-bottom:0.5rem;">
+                            <h2 style="font-size:1.1rem; color:var(--accent);">🕘 History: ${data.resource_type.toUpperCase()} '${data.resource_id}'</h2>
+                            <button class="btn btn-outline btn-sm" onclick="closeModal()">✕</button>
+                        </div>
+                        <div style="background:#0f172a; padding:0.75rem; border-radius:8px; border:1px solid var(--accent); margin-bottom:1rem; font-size:0.85rem;">
+                            <div style="font-weight:700; color:var(--text-main); margin-bottom:0.25rem;">📌 Current Canonical State</div>
+                            <div style="color:var(--text-sub);">${data.current_state}</div>
+                        </div>
+                        <div style="background:rgba(244, 114, 182, 0.1); padding:0.75rem; border-radius:8px; border:1px solid var(--pink); margin-bottom:1rem; font-size:0.85rem;">
+                            <div style="font-weight:700; color:var(--pink); margin-bottom:0.25rem;">🤖 Mayil Interpretation</div>
+                            <div style="color:var(--text-main);">${data.mayil_interpretation}</div>
+                        </div>
+                        <div class="item-list">
+                            <div style="font-size:0.85rem; font-weight:700; color:var(--text-sub); margin-bottom:0.4rem;">📜 Recorded Activity Facts</div>
+                            ${data.recorded_facts.length > 0 ? data.recorded_facts.map(f => `
+                                <div class="item-row" style="font-size:0.82rem;">
+                                    <div>${f}</div>
+                                </div>
+                            `).join('') : '<div class="item-sub">No history recorded for this resource.</div>'}
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                modal.innerHTML = `<div class="modal-card"><div class="item-sub">Unable to load resource history.</div><button class="btn" onclick="closeModal()">Close</button></div>`;
+            }
+        }
+
+        async function renderHistory(container) {
+            const data = await fetchAPI('/api/history');
+            const txs = data.transactions || [];
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div>
+                        <h1 class="section-title">🕘 Activity & Transaction History</h1>
+                        <div class="section-subtitle">Immutable Audit Memory & Reconstructable Product Journeys</div>
+                    </div>
+                    <div>
+                        <button class="btn btn-pink" onclick="openAskMayilPanel(); setTimeout(()=> { document.getElementById('mayil-query-input').value='What happened today?'; }, 300);">🤖 Ask Mayil About History</button>
+                    </div>
+                </div>
+
+                <!-- Visual Activity Chain Diagram -->
+                <div class="card" style="margin-bottom:1.5rem; background: linear-gradient(135deg, #111827 0%, #1e293b 100%); border: 1px solid var(--accent);">
+                    <div class="card-header">
+                        <div class="card-title" style="color:var(--accent);">✨ Visual Memory Journey Timeline</div>
+                        <span class="pill pill-general">Correlation Chain</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding:0.5rem 0; text-align:center;">
+                        <div style="background:#0f172a; padding:0.6rem 0.8rem; border-radius:8px; border:1px solid var(--card-border);">
+                            <div style="font-size:1.2rem;">👤</div>
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--text-main);">1. Add Member</div>
+                        </div>
+                        <div style="color:var(--text-sub);">➔</div>
+                        <div style="background:#0f172a; padding:0.6rem 0.8rem; border-radius:8px; border:1px solid var(--card-border);">
+                            <div style="font-size:1.2rem;">📅</div>
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--text-main);">2. Schedule Event</div>
+                        </div>
+                        <div style="color:var(--text-sub);">➔</div>
+                        <div style="background:#0f172a; padding:0.6rem 0.8rem; border-radius:8px; border:1px solid var(--card-border);">
+                            <div style="font-size:1.2rem;">📸</div>
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--text-main);">3. Attach Photos</div>
+                        </div>
+                        <div style="color:var(--text-sub);">➔</div>
+                        <div style="background:#0f172a; padding:0.6rem 0.8rem; border-radius:8px; border:1px solid var(--card-border);">
+                            <div style="font-size:1.2rem;">📖</div>
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--text-main);">4. Write Story</div>
+                        </div>
+                        <div style="color:var(--text-sub);">➔</div>
+                        <div style="background:#0f172a; padding:0.6rem 0.8rem; border-radius:8px; border:1px solid var(--card-border);">
+                            <div style="font-size:1.2rem;">🎉</div>
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--text-main);">5. Celebration Album</div>
+                        </div>
+                        <div style="color:var(--text-sub);">➔</div>
+                        <div style="background:#0f172a; padding:0.6rem 0.8rem; border-radius:8px; border:1px solid var(--card-border);">
+                            <div style="font-size:1.2rem;">🔗</div>
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--text-main);">6. Share & Revoke</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">📜 Authorized Activity Feed</div>
+                        <span class="pill pill-milestone">${txs.length} Recorded Transactions</span>
+                    </div>
+                    <div class="item-list">
+                        ${txs.length > 0 ? txs.map(t => `
+                            <div class="item-row">
+                                <div style="flex:1;">
+                                    <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.25rem;">
+                                        <span class="pill pill-${t.action_type.includes('delete') || t.action_type.includes('revoke') ? 'private' : 'general'}">${t.action_type.toUpperCase()}</span>
+                                        <span style="font-size:0.85rem; font-weight:700; color:var(--text-main);">${t.resource_label_snapshot}</span>
+                                        <span style="font-size:0.72rem; color:var(--text-sub);">• ${t.timestamp}</span>
+                                    </div>
+                                    <div style="font-size:0.85rem; color:var(--text-sub);">${t.operation}</div>
+                                    <div style="font-size:0.75rem; color:var(--text-sub); margin-top:0.2rem;">
+                                        Actor: <strong>${t.actor_account_id}</strong> | Visibility: <strong>${t.visibility}</strong> | Type: <strong>${t.resource_type}</strong>
+                                    </div>
+                                </div>
+                                <div>
+                                    <button class="btn btn-sm btn-outline" onclick="openResourceHistoryModal('${t.resource_type}', '${t.resource_id}')">🕘 Inspect History</button>
+                                </div>
+                            </div>
+                        `).join('') : '<div class="item-sub">No transaction history recorded yet.</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+
         async function renderHome(container) {
             const data = await fetchAPI('/api/dashboard');
             const summary = data.summary || {};
@@ -805,9 +1219,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             let mediaGalleryHTML = mediaItems.map(m => {
                 let playerHTML = '';
                 if (m.media_type === 'video') {
-                    playerHTML = `<video controls src="${m.uri}" style="width:100%; height:140px; object-fit:cover; display:block; background:#000;"></video>`;
+                    playerHTML = `<video controls src="${m.uri}" style="width:100%; height:150px; object-fit:cover; display:block; background:#000;"></video>`;
                 } else if (m.media_type === 'audio') {
-                    playerHTML = `<div style="padding:1rem; background:#0f172a; height:140px; display:flex; align-items:center;"><audio controls src="${m.uri}" style="width:100%;"></audio></div>`;
+                    playerHTML = `
+                        <div class="audio-waveform-box">
+                            <div style="font-size:0.8rem; font-weight:700; color:var(--pink); margin-bottom:0.4rem;">🎙️ Voice Memo</div>
+                            <div class="audio-waveform-visual">
+                                <div class="waveform-bar" style="animation-delay: 0.1s;"></div>
+                                <div class="waveform-bar" style="animation-delay: 0.3s;"></div>
+                                <div class="waveform-bar" style="animation-delay: 0.2s;"></div>
+                                <div class="waveform-bar" style="animation-delay: 0.4s;"></div>
+                                <div class="waveform-bar" style="animation-delay: 0.15s;"></div>
+                                <div class="waveform-bar" style="animation-delay: 0.35s;"></div>
+                                <div class="waveform-bar" style="animation-delay: 0.25s;"></div>
+                            </div>
+                            <audio controls src="${m.uri}" style="width:100%; max-width:200px; height:32px;"></audio>
+                        </div>
+                    `;
                 } else {
                     playerHTML = `<img src="${m.uri}" alt="${m.caption || 'Photo'}" />`;
                 }
@@ -815,12 +1243,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 const fn = generate_media_download_filename(m.caption, m.media_type);
 
                 return `
-                    <div class="media-thumb">
+                    <div class="media-card">
                         ${playerHTML}
                         <div class="media-caption">${m.caption || 'Family Moment'}</div>
+                        <div class="media-meta">Visibility: <strong>${m.visibility}</strong></div>
                         <div class="media-actions">
                             <a href="${m.uri}" download="${fn}" class="btn btn-sm btn-outline" style="text-decoration:none;" target="_blank">⬇ Download</a>
                             <button class="btn btn-sm btn-outline" onclick="openShareMediaModal('${m.id}', '${(m.caption || 'Family Media').replace(/'/g, "\'")}', '${m.uri}', '${m.media_type}', '${m.visibility}')">🔗 Share</button>
+                            <button class="btn btn-sm btn-pink" onclick="openGenerateArtifactModal();">✨ Celebration</button>
                         </div>
                     </div>
                 `;
@@ -829,40 +1259,54 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             container.innerHTML = `
                 <div class="page-header">
                     <div>
-                        <h1 class="section-title">📖 Family Memories & Media</h1>
-                        <div class="section-subtitle">Narrative Stories, Photos, Videos, and Voice Memos</div>
+                        <h1 class="section-title">📖 Memories & Media</h1>
+                        <div class="section-subtitle">Capture the moments that matter. Photos, videos, and voice memos.</div>
                     </div>
-                    <div style="display:flex; gap:0.5rem;">
-                        <button class="btn" onclick="openMediaCaptureCenter()">📸 Add Family Media</button>
-                        <button class="btn btn-outline" onclick="createMemoryPrompt()">✏️ Write Memory</button>
+                    <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                        <button class="btn btn-pink" onclick="openMediaCaptureCenter()">📸 Capture Now</button>
+                        <button class="btn btn-outline" onclick="openMediaCaptureCenter(); setTimeout(()=>switchCaptureTab('audio'), 200);">🎙️ Record Voice</button>
+                        <button class="btn btn-outline" onclick="openMediaCaptureCenter(); setTimeout(()=>switchCaptureTab('video'), 200);">🎥 Record Video</button>
+                        <button class="btn btn-outline" onclick="openMediaCaptureCenter(); setTimeout(()=>switchCaptureTab('file'), 200);">📁 Upload / Drop Files</button>
+                        <button class="btn btn-outline" onclick="createMemoryPrompt()">✏️ Write Story</button>
                     </div>
                 </div>
 
                 <div class="card" style="margin-bottom:1.5rem;">
                     <div class="card-header">
-                        <div class="card-title">📖 Memory Timeline Stream</div>
-                        <span class="pill pill-milestone">${timeline.length} Entries</span>
+                        <div class="card-title">📖 Memory Story Wall</div>
+                        <span class="pill pill-milestone">${timeline.length} Story Entries</span>
                     </div>
                     <div class="item-list">
                         ${timeline.length > 0 ? timeline.map(t => `
-                            <div class="item-row">
-                                <div>
-                                    <div class="item-main">${t.title || 'Family Memory'}</div>
-                                    <div class="item-sub">${t.narrative || t.description || ''} • Author: ${t.author_name || 'Family Member'}</div>
+                            <div class="item-row" style="align-items:flex-start;">
+                                <div style="flex:1;">
+                                    <div class="item-main" style="font-size:1rem; color:var(--text-main); margin-bottom:0.25rem;">
+                                        ${t.title || 'Family Memory Story'}
+                                    </div>
+                                    <div style="font-size:0.88rem; color:var(--text-sub); line-height:1.5; margin-bottom:0.5rem;">
+                                        "${t.narrative || t.description || 'A cherished moment captured in the family memory timeline.'}"
+                                    </div>
+                                    <div class="item-sub">
+                                        Captured by <strong>${t.author_name || 'Family Member'}</strong> • Visibility: <span class="pill pill-general" style="font-size:0.65rem;">FAMILY VISIBLE</span>
+                                    </div>
                                 </div>
-                                <span class="pill pill-general">${t.item_type || 'MEMORY'}</span>
+                                <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
+                                    <button class="btn btn-sm btn-outline" onclick="openMediaCaptureCenter('${t.id || ''}')">📸 Add Media</button>
+                                    <button class="btn btn-sm btn-outline" onclick="openShareModal('MEMORY', '${t.id || ''}')">🔗 Share Memory</button>
+                                    <button class="btn btn-sm btn-pink" onclick="openGenerateArtifactModal('card')">✨ Create Celebration</button>
+                                </div>
                             </div>
-                        `).join('') : '<div class="item-sub">No memories recorded yet.</div>'}
+                        `).join('') : '<div class="item-sub">No memories recorded yet. Click Write Story or Capture Now!</div>'}
                     </div>
                 </div>
 
                 <div class="card">
                     <div class="card-header">
-                        <div class="card-title">🎥 A/V Media Gallery (${mediaItems.length} Items, ${mediaAlbums.length} Albums)</div>
+                        <div class="card-title">🎥 Family Media Gallery (${mediaItems.length} Items, ${mediaAlbums.length} Albums)</div>
                         <button class="btn btn-sm btn-pink" onclick="openMediaCaptureCenter()">📸 Capture / Upload</button>
                     </div>
                     <div class="media-gallery">
-                        ${mediaGalleryHTML || '<div class="item-sub" style="grid-column: 1/-1;">No media items captured yet. Click Add Family Media to capture a photo, video, or voice memo!</div>'}
+                        ${mediaGalleryHTML || '<div class="item-sub" style="grid-column: 1/-1;">No media items captured yet. Click Capture Now to record a photo, video, or voice memo!</div>'}
                     </div>
                 </div>
             `;
@@ -876,32 +1320,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <div class="page-header">
                     <div>
                         <h1 class="section-title">🎉 Celebration Studio</h1>
-                        <div class="section-subtitle">Derived Celebration Cards, Digests, Highlights, and Albums</div>
+                        <div class="section-subtitle">Turn meaningful moments into something worth remembering.</div>
                     </div>
-                    <div>
-                        <button class="btn btn-pink" onclick="openGenerateArtifactModal()">✨ Generate Celebration Card</button>
+                    <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                        <button class="btn btn-pink" onclick="openGenerateArtifactModal('card')">✨ Generate Celebration Card</button>
+                        <button class="btn btn-outline" onclick="openGenerateArtifactModal('album')">📚 Build Celebration Album</button>
+                        <button class="btn btn-outline" onclick="openGenerateArtifactModal('person')">👤 Person Highlight</button>
                     </div>
                 </div>
 
                 <div class="grid">
                     ${artifacts.length > 0 ? artifacts.map(a => `
-                        <div class="card" style="border-top: 4px solid var(--pink);">
-                            <div class="card-header">
-                                <div class="card-title">${a.title}</div>
-                                <span class="pill pill-anniversary">${a.artifact_type}</span>
-                            </div>
-                            <div style="font-size:0.85rem; color:var(--text-sub); margin-bottom:1rem; line-height:1.5;">
-                                ${a.subtitle ? `<div style="font-weight:700; color:var(--text-main);">${a.subtitle}</div>` : ''}
-                                <div style="margin-top:0.4rem; background:#0f172a; padding:0.6rem; border-radius:6px; border:1px solid rgba(255,255,255,0.05); color:var(--text-main);">
-                                    "${a.rendered_text || 'Celebration Artifact Derived Content'}"
+                        <div class="card" style="border-top: 4px solid var(--pink); display:flex; flex-direction:column; justify-content:space-between;">
+                            <div>
+                                <div class="card-header">
+                                    <div class="card-title">${a.title}</div>
+                                    <span class="pill pill-anniversary">${a.artifact_type}</span>
+                                </div>
+                                <div style="font-size:0.85rem; color:var(--text-sub); margin-bottom:1rem; line-height:1.5;">
+                                    ${a.subtitle ? `<div style="font-weight:700; color:var(--text-main); margin-bottom:0.4rem;">${a.subtitle}</div>` : ''}
+                                    <div style="background:#0f172a; padding:0.75rem; border-radius:6px; border:1px solid rgba(255,255,255,0.05); color:var(--text-main); font-style:italic;">
+                                        "${a.rendered_text || 'Celebration Artifact Derived Content'}"
+                                    </div>
                                 </div>
                             </div>
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <span style="font-size:0.75rem; color:var(--text-sub);">Visibility: ${a.visibility}</span>
-                                <button class="btn btn-sm btn-outline" onclick="openShareModal('MEDIA_ITEM', '${a.id}')">🔗 Share Artifact</button>
+                            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.05); padding-top:0.75rem; margin-top:0.5rem; flex-wrap:wrap; gap:0.4rem;">
+                                <span style="font-size:0.75rem; color:var(--text-sub);">Visibility: <strong>${a.visibility}</strong></span>
+                                <div style="display:flex; gap:0.4rem;">
+                                    <button class="btn btn-sm btn-outline" onclick="loadView('memories')">📖 View Source Memory</button>
+                                    <button class="btn btn-sm btn-pink" onclick="openShareModal('MEDIA_ITEM', '${a.id}')">🔗 Share Artifact</button>
+                                </div>
                             </div>
                         </div>
-                    `).join('') : '<div class="card"><div class="item-sub">No celebration artifacts generated yet. Click Generate Celebration Card above!</div></div>'}
+                    `).join('') : '<div class="card" style="grid-column: 1/-1;"><div class="item-sub">No celebration artifacts generated yet. Click Generate Celebration Card above!</div></div>'}
                 </div>
             `;
         }
@@ -2257,24 +2708,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ proposal_id: propId })
-            });
-            loadView('mayil');
-        }
-
-        async function executeRepair(propId) {
-            await fetchAPI('/api/guardian/repair', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ proposal_id: propId })
-            });
-            loadView('guardian');
-        }
-
-        // Initialize UI
-        initMembers().then(() => loadView('home'));
-    </script>
-</body>
-</html>
 """
 
 
@@ -2368,10 +2801,50 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             audit = api.run_integrity_audit_for_session(session_id, fc_id)
             proposals = api.get_repair_proposals_for_session(session_id, fc_id)
             self._send_json({"audit": to_dict(audit), "repair_proposals": to_dict(proposals)})
+        elif path == "/api/guide/practice/status":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            pw = demo_state.api.get_practice_world_state_for_session(session.session_id)
+            if not pw:
+                pw = demo_state.api.start_practice_world_for_session(session.session_id, demo_state.family_context.id)
+            self._send_json({"practice_world": to_dict(pw)})
+            return
+        elif path == "/api/guide/status":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            st = demo_state.api.get_guided_experience_state_for_session(session.session_id)
+            if not st:
+                st = demo_state.api.initialize_guided_experience_for_session(session.session_id, demo_state.family_context.id)
+            scenes = demo_state.api.get_shared_journey_scenes_for_session(session.session_id)
+            self._send_json({"session_state": to_dict(st), "scenes": to_dict(scenes)})
+            return
         elif path == "/api/export":
             export_data = api.export_family_context_for_session(session_id, fc_id)
             validation = api.validate_data_export(to_dict(export_data))
             self._send_json({"export": to_dict(export_data), "validation": to_dict(validation)})
+        elif path == "/api/history":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            history = demo_state.api.get_transaction_history_for_session(
+                session.session_id, demo_state.family_context.id, limit=50
+            )
+            res = [r.__dict__ for r in history]
+            for r in res:
+                r['timestamp'] = r['timestamp'].isoformat()
+                r['action_type'] = str(r['action_type'])
+                r['resource_type'] = str(r['resource_type'])
+                r['visibility'] = str(r['visibility'])
+            self._send_json({"transactions": res})
+        elif path.startswith("/api/resource_history"):
+            session = demo_state.api._validate_session(demo_state.session_id)
+            res_type = query.get('type', ['event'])[0]
+            res_id = query.get('id', [''])[0]
+            from ENGINEERING.source.femc.models import ResourceType
+            try:
+                rt = ResourceType(res_type.lower())
+            except Exception:
+                rt = ResourceType.EVENT
+            explanation = demo_state.api.explain_resource_history_for_session(
+                session.session_id, demo_state.family_context.id, rt, res_id
+            )
+            self._send_json(explanation)
         else:
             self.send_error(404, "Not Found")
 
@@ -2395,7 +2868,117 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         session_id = demo_state.session_id
         fc_id = demo_state.family_context.id
 
-        if path == "/api/session/switch":
+        if path == "/api/guide/practice/start":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            from ENGINEERING.source.femc.models import ContextType, AgeGroup, Language
+            ctx_str = payload.get("context_type", "family").lower()
+            age_str = payload.get("age_group", "mixed").lower()
+            lang_str = payload.get("language", "en").lower()
+            inc_fam = payload.get("include_family", True)
+
+            try: ctx = ContextType(ctx_str)
+            except Exception: ctx = ContextType.FAMILY
+
+            try: age = AgeGroup(age_str)
+            except Exception: age = AgeGroup.MIXED
+
+            try: lang = Language(lang_str)
+            except Exception: lang = Language.ENGLISH
+
+            pw = demo_state.api.start_practice_world_for_session(
+                session.session_id, demo_state.family_context.id, ctx, age, inc_fam, lang
+            )
+            self._send_json({"status": "success", "practice_world": to_dict(pw)})
+            return
+        elif path == "/api/guide/practice/action":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            from ENGINEERING.source.femc.models import ActionType, ResourceType
+            act_str = payload.get("action_type", "PERSPECTIVE_SWITCH").upper()
+            res_type_str = payload.get("resource_type", "EVENT").upper()
+            ctrl_id = payload.get("control_id", "nav-home")
+            action_payload = payload.get("payload", {})
+
+            try: act = ActionType(act_str.lower())
+            except Exception: act = ActionType.PERSPECTIVE_SWITCH
+
+            try: rt = ResourceType(res_type_str.lower())
+            except Exception: rt = ResourceType.EVENT
+
+            res = demo_state.api.execute_simulated_action_for_session(
+                session.session_id, act, ctrl_id, rt, action_payload
+            )
+            self._send_json(to_dict(res))
+            return
+        elif path == "/api/guide/practice/reset":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            pw = demo_state.api.reset_practice_world_for_session(session.session_id)
+            self._send_json({"status": "success", "message": "Practice World reset successfully.", "practice_world": to_dict(pw)})
+            return
+        elif path == "/api/guide/practice/exit":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            res = demo_state.api.exit_practice_world_for_session(session.session_id)
+            self._send_json(to_dict(res))
+            return
+        elif path == "/api/guide/init":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            from ENGINEERING.source.femc.models import GuideMode, ContextType, AgeGroup, Language
+            mode_str = payload.get("mode", "learn_by_doing").lower()
+            ctx_str = payload.get("context_type", "family").lower()
+            age_str = payload.get("age_group", "mixed").lower()
+            lang_str = payload.get("language", "en").lower()
+            inc_fam = payload.get("include_family", True)
+
+            try: mode = GuideMode(mode_str)
+            except Exception: mode = GuideMode.LEARN_BY_DOING
+
+            try: ctx = ContextType(ctx_str)
+            except Exception: ctx = ContextType.FAMILY
+
+            try: age = AgeGroup(age_str)
+            except Exception: age = AgeGroup.MIXED
+
+            try: lang = Language(lang_str)
+            except Exception: lang = Language.ENGLISH
+
+            st = demo_state.api.initialize_guided_experience_for_session(
+                session.session_id, demo_state.family_context.id, mode, ctx, age, inc_fam, lang
+            )
+            scenes = demo_state.api.get_shared_journey_scenes_for_session(session.session_id)
+            self._send_json({"status": "success", "session_state": to_dict(st), "scenes": to_dict(scenes)})
+            return
+        elif path == "/api/guide/validate":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            from ENGINEERING.source.femc.models import ActionType
+            act_str = payload.get("action_type", "PERSPECTIVE_SWITCH").upper()
+            ctrl_id = payload.get("control_id", "nav-home")
+            res_id = payload.get("resource_id", "")
+            res_label = payload.get("resource_label", "")
+            op = payload.get("operation", "")
+
+            try: act = ActionType(act_str.lower())
+            except Exception: act = ActionType.PERSPECTIVE_SWITCH
+
+            res = demo_state.api.validate_guided_action_for_session(
+                session.session_id, act, ctrl_id, res_id, res_label, op
+            )
+            self._send_json(to_dict(res))
+            return
+        elif path == "/api/guide/switch_mode":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            from ENGINEERING.source.femc.models import GuideMode
+            mode_str = payload.get("mode", "learn_by_doing").lower()
+            try: mode = GuideMode(mode_str)
+            except Exception: mode = GuideMode.LEARN_BY_DOING
+
+            st = demo_state.api.switch_guided_experience_mode_for_session(session.session_id, mode)
+            self._send_json({"status": "success", "session_state": to_dict(st)})
+            return
+        elif path == "/api/guide/reset":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            st = demo_state.api.reset_guided_experience_for_session(session.session_id)
+            self._send_json({"status": "success", "session_state": to_dict(st)})
+            return
+        elif path == "/api/session/switch":
             acc_id = payload.get("account_id")
             if acc_id:
                 new_session_id = demo_state.switch_session(acc_id)

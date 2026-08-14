@@ -26,7 +26,15 @@ from .models import (
     ProvenanceSourceType,
     SearchResultEntry,
     CalendarProjectionEntry,
+    ContextType,
+    AgeGroup,
+    Language,
+    GuideMode,
+    SceneDefinition,
+    GuideSessionState,
+    MayilPracticeWorld,
 )
+from .services import MayilGuidedExperienceService
 
 __all__ = [
     "FEMCApi",
@@ -37,6 +45,7 @@ __all__ = [
     "MemoryService",
     "SearchService",
     "DashboardService",
+    "MayilGuidedExperienceService",
     "CanonicalRepository",
     "DerivedRepository",
     "Person",
@@ -63,4 +72,10 @@ __all__ = [
     "ProvenanceSourceType",
     "SearchResultEntry",
     "CalendarProjectionEntry",
+    "ContextType",
+    "AgeGroup",
+    "Language",
+    "GuideMode",
+    "SceneDefinition",
+    "GuideSessionState",
 ]

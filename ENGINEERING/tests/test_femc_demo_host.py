@@ -68,15 +68,16 @@ def test_demo_api_endpoints_data():
 def test_productized_html_template():
     assert "FEMC" in HTML_TEMPLATE
     assert "v2.3-C Complete" in HTML_TEMPLATE
-    assert "🏠 HOME" in HTML_TEMPLATE
-    assert "👨‍👩‍👧‍👦 FAMILY" in HTML_TEMPLATE
-    assert "📅 CALENDAR" in HTML_TEMPLATE
-    assert "📖 MEMORIES" in HTML_TEMPLATE
-    assert "🎉 CELEBRATIONS" in HTML_TEMPLATE
-    assert "🔔 REMINDERS" in HTML_TEMPLATE
-    assert "🧠 MAYIL AI" in HTML_TEMPLATE
-    assert "🔗 SHARING" in HTML_TEMPLATE
-    assert "⚙️ SETTINGS / DATA" in HTML_TEMPLATE
+    assert "nav-home" in HTML_TEMPLATE
+    assert "HOME" in HTML_TEMPLATE
+    assert "FAMILY" in HTML_TEMPLATE
+    assert "CALENDAR" in HTML_TEMPLATE
+    assert "MEMORIES & MEDIA" in HTML_TEMPLATE
+    assert "CELEBRATIONS" in HTML_TEMPLATE
+    assert "REMINDERS" in HTML_TEMPLATE
+    assert "MAYIL AI" in HTML_TEMPLATE
+    assert "SHARING" in HTML_TEMPLATE
+    assert "SETTINGS / DATA" in HTML_TEMPLATE
     assert "perspective-select" in HTML_TEMPLATE
 
 
@@ -587,3 +588,82 @@ def test_v2_3_defect_clearance_av_media_to_share_full_chain():
         assert False, "Revoked share token should raise PermissionError"
     except PermissionError:
         pass
+
+
+# ==================================================
+# V2.3-C RIBBON & RECONSTRUCTION REGRESSION TESTS
+# ==================================================
+
+def test_v2_3_c_reconstructed_ribbon_items_exist():
+    assert 'id="nav-home"' in HTML_TEMPLATE
+    assert 'id="nav-family"' in HTML_TEMPLATE
+    assert 'id="nav-calendar"' in HTML_TEMPLATE
+    assert 'id="nav-memories"' in HTML_TEMPLATE
+    assert 'id="nav-celebrations"' in HTML_TEMPLATE
+    assert 'id="nav-reminders"' in HTML_TEMPLATE
+    assert 'id="nav-mayil"' in HTML_TEMPLATE
+    assert 'id="nav-guardian"' in HTML_TEMPLATE
+    assert 'id="nav-sharing"' in HTML_TEMPLATE
+    assert 'id="nav-settings"' in HTML_TEMPLATE
+
+
+def test_v2_3_c_ribbon_valid_targets_and_subtitles():
+    assert "loadView('home'" in HTML_TEMPLATE
+    assert "Overview" in HTML_TEMPLATE
+    assert "loadView('family'" in HTML_TEMPLATE
+    assert "Our Family & Group" in HTML_TEMPLATE
+    assert "loadView('calendar'" in HTML_TEMPLATE
+    assert "Events & Plans" in HTML_TEMPLATE
+    assert "loadView('memories'" in HTML_TEMPLATE
+    assert "Photos, Videos, Audio" in HTML_TEMPLATE
+    assert "loadView('celebrations'" in HTML_TEMPLATE
+    assert "Studio & Albums" in HTML_TEMPLATE
+    assert "loadView('reminders'" in HTML_TEMPLATE
+    assert "Alerts & Tasks" in HTML_TEMPLATE
+    assert "loadView('mayil'" in HTML_TEMPLATE
+    assert "Smart Assistant" in HTML_TEMPLATE
+    assert "loadView('guardian'" in HTML_TEMPLATE
+    assert "Privacy & Safety" in HTML_TEMPLATE
+    assert "loadView('sharing'" in HTML_TEMPLATE
+    assert "Share & Connect" in HTML_TEMPLATE
+    assert "loadView('settings'" in HTML_TEMPLATE
+    assert "Export & More" in HTML_TEMPLATE
+
+
+def test_v2_3_c_active_navigation_state_management():
+    assert "setActiveNav(viewName)" in HTML_TEMPLATE
+    assert "nav-link active" in HTML_TEMPLATE
+    assert "femc-ribbon" in HTML_TEMPLATE
+
+
+def test_v2_3_c_loading_state_and_retry_ui():
+    assert "Loading family data..." in HTML_TEMPLATE
+    assert "Unable to load screen data" in HTML_TEMPLATE
+    assert "🔄 Retry Loading" in HTML_TEMPLATE
+
+
+def test_v2_3_c_memories_route_and_story_wall():
+    assert "📖 Memories & Media" in HTML_TEMPLATE
+    assert "Capture the moments that matter." in HTML_TEMPLATE
+    assert "📸 Capture Now" in HTML_TEMPLATE
+    assert "🎙️ Record Voice" in HTML_TEMPLATE
+    assert "🎥 Record Video" in HTML_TEMPLATE
+    assert "📁 Upload / Drop Files" in HTML_TEMPLATE
+    assert "✏️ Write Story" in HTML_TEMPLATE
+    assert "audio-waveform-visual" in HTML_TEMPLATE
+
+
+def test_v2_3_c_celebration_studio_and_bidirectional_links():
+    assert "🎉 Celebration Studio" in HTML_TEMPLATE
+    assert "Turn meaningful moments into something worth remembering." in HTML_TEMPLATE
+    assert "✨ Generate Celebration Card" in HTML_TEMPLATE
+    assert "📚 Build Celebration Album" in HTML_TEMPLATE
+    assert "👤 Person Highlight" in HTML_TEMPLATE
+    assert "📖 View Source Memory" in HTML_TEMPLATE
+
+
+def test_v2_3_c_mayil_controls_and_journey_accessibility():
+    assert "🤖 Ask Mayil" in HTML_TEMPLATE
+    assert "🎬 Mayil's Journey" in HTML_TEMPLATE
+    assert "stopNarration()" in HTML_TEMPLATE
+    assert "speechSynthesis.cancel()" in HTML_TEMPLATE

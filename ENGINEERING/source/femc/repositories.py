@@ -6,12 +6,12 @@ from typing import Dict, List, Optional
 from .models import (
     Account,
     ActionProposal,
+    ActionType,
     AuthenticatedSession,
     CalendarProjectionEntry,
     CelebrationArtifact,
     DashboardProjectionEntry,
     Event,
-
     EventStatus,
     FamilyContext,
     InsightAnalysis,
@@ -25,9 +25,11 @@ from .models import (
     Relationship,
     ReminderConfig,
     RepairProposal,
+    ResourceType,
     SearchResultEntry,
     ShareLink,
     TimelineProjectionEntry,
+    TransactionRecord,
 )
 
 
@@ -336,3 +338,44 @@ class DerivedRepository:
     def search(self, query: str) -> List[SearchResultEntry]:
         normalized = query.strip().lower()
         return [entry for entry in self.search_entries if normalized in entry.title.lower() or normalized in entry.excerpt.lower()]
+
+
+class TransactionMemoryRepository:
+    def __init__(self) -> None:
+        self.records: List[TransactionRecord] = []
+
+    def record_transaction(self, record: TransactionRecord) -> TransactionRecord:
+        self.records.append(record)
+        return record
+
+    def list_transactions(
+        self,
+        family_context_id: Optional[str] = None,
+        resource_type: Optional[ResourceType] = None,
+        resource_id: Optional[str] = None,
+        actor_account_id: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[TransactionRecord]:
+        results = list(self.records)
+        if family_context_id:
+            results = [r for r in results if r.family_context_id == family_context_id]
+        if resource_type:
+            results = [r for r in results if r.resource_type == resource_type]
+        if resource_id:
+            results = [r for r in results if r.resource_id == resource_id or resource_id in r.related_resource_ids]
+        if actor_account_id:
+            results = [r for r in results if r.actor_account_id == actor_account_id]
+        if correlation_id:
+            results = [r for r in results if r.correlation_id == correlation_id]
+
+        results.sort(key=lambda x: x.timestamp, reverse=True)
+        if limit and limit > 0:
+            return results[:limit]
+        return results
+
+    def clear(self, family_context_id: Optional[str] = None) -> None:
+        if family_context_id is None:
+            self.records.clear()
+        else:
+            self.records = [r for r in self.records if r.family_context_id != family_context_id]

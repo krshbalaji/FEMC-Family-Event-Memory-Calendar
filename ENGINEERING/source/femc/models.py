@@ -109,6 +109,78 @@ class ReminderStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class ActionType(str, enum.Enum):
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    ATTACH = "attach"
+    DETACH = "detach"
+    GENERATE = "generate"
+    SHARE = "share"
+    REVOKE_SHARE = "revoke_share"
+    DOWNLOAD = "download"
+    IMPORT = "import"
+    EXPORT = "export"
+    RESTORE = "restore"
+    REMINDER_CREATE = "reminder_create"
+    REMINDER_UPDATE = "reminder_update"
+    REMINDER_COMPLETE = "reminder_complete"
+    NOTIFICATION_CREATE = "notification_create"
+    NOTIFICATION_READ = "notification_read"
+    MAYIL_PROPOSAL = "mayil_proposal"
+    MAYIL_APPROVE = "mayil_approve"
+    MAYIL_REJECT = "mayil_reject"
+    PRIVACY_CHANGE = "privacy_change"
+    PERSPECTIVE_SWITCH = "perspective_switch"
+    GUARDIAN_DETECT = "guardian_detect"
+    GUARDIAN_REPAIR = "guardian_repair"
+
+
+class ResourceType(str, enum.Enum):
+    PERSON = "person"
+    ACCOUNT = "account"
+    GROUP_CONTEXT = "group_context"
+    RELATIONSHIP = "relationship"
+    EVENT = "event"
+    MEMORY = "memory"
+    MEDIA = "media"
+    MEDIA_ALBUM = "media_album"
+    REMINDER = "reminder"
+    NOTIFICATION = "notification"
+    CELEBRATION_ARTIFACT = "celebration_artifact"
+    SHARE_LINK = "share_link"
+    MAYIL_INTERACTION = "mayil_interaction"
+    GUARDIAN_EVENT = "guardian_event"
+    DATA_EXPORT = "data_export"
+    DATA_IMPORT = "data_import"
+
+
+@dataclass
+class TransactionRecord:
+    transaction_id: str = field(default_factory=_new_id)
+    timestamp: datetime.datetime = field(default_factory=_utc_now)
+    actor_account_id: str = ""
+    actor_person_id: Optional[str] = None
+    family_context_id: str = ""
+    action_type: ActionType = ActionType.CREATE
+    resource_type: ResourceType = ResourceType.EVENT
+    resource_id: str = ""
+    resource_label_snapshot: str = ""
+    operation: str = ""
+    result_status: str = "SUCCESS"
+    visibility: VisibilityLevel = VisibilityLevel.FAMILY
+    source: str = "user_action"
+    correlation_id: Optional[str] = None
+    parent_transaction_id: Optional[str] = None
+    changed_fields: Optional[Dict[str, Any]] = None
+    before_snapshot: Optional[Dict[str, Any]] = None
+    after_snapshot: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+    related_resource_ids: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+
 @dataclass
 class RecurrenceRule:
     frequency: RecurrenceFrequency = RecurrenceFrequency.DAILY
@@ -558,6 +630,96 @@ class ValidationReport:
     checked_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
     total_entities_inspected: int = 0
     anomalies: List[AuditAnomaly] = field(default_factory=list)
+
+
+# ============================================================
+# V2.3-D MAYIL LEARN-BY-DOING + LIVING DEMO MODELS
+# ============================================================
+
+class ContextType(str, enum.Enum):
+    FAMILY = "family"
+    FRIENDS = "friends"
+    COMMUNITY = "community"
+
+
+class AgeGroup(str, enum.Enum):
+    CHILDREN = "children"
+    TEENS = "teens"
+    YOUNG_ADULTS = "young_adults"
+    ADULTS = "adults"
+    SENIORS = "seniors"
+    MIXED = "mixed"
+
+
+class Language(str, enum.Enum):
+    ENGLISH = "en"
+    TAMIL = "ta"
+    HINDI = "hi"
+
+
+class GuideMode(str, enum.Enum):
+    LEARN_BY_DOING = "learn_by_doing"
+    WATCH_JOURNEY = "watch_journey"
+
+
+@dataclass
+class SceneDefinition:
+    scene_id: str
+    scene_index: int
+    title: Dict[str, str] = field(default_factory=dict)
+    instruction: Dict[str, str] = field(default_factory=dict)
+    narration: Dict[str, str] = field(default_factory=dict)
+    subtitle: Dict[str, str] = field(default_factory=dict)
+    success_message: Dict[str, str] = field(default_factory=dict)
+    help_message: Dict[str, str] = field(default_factory=dict)
+    target_view: str = "home"
+    target_control: str = "nav-home"
+    expected_action: ActionType = ActionType.CREATE
+    expected_resource_type: ResourceType = ResourceType.EVENT
+    visual_asset: str = "welcome_banner"
+    animation_type: str = "glow_pulse"
+    transaction_expectation: str = "CREATE_EVENT"
+    next_scene_id: Optional[str] = None
+
+
+@dataclass
+class GuideSessionState:
+    session_id: str = field(default_factory=_new_id)
+    account_id: str = ""
+    family_context_id: str = ""
+    current_mode: GuideMode = GuideMode.LEARN_BY_DOING
+    current_scene_index: int = 0
+    context_type: ContextType = ContextType.FAMILY
+    age_group: AgeGroup = AgeGroup.MIXED
+    include_family: bool = True
+    language: Language = Language.ENGLISH
+    voice_enabled: bool = True
+    attempts: int = 0
+    completed_scene_ids: List[str] = field(default_factory=list)
+    created_resource_ids: List[str] = field(default_factory=list)
+    last_transaction_id: Optional[str] = None
+    updated_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+
+
+@dataclass
+class MayilPracticeWorld:
+    session_id: str = field(default_factory=_new_id)
+    account_id: str = ""
+    family_context_id: str = ""
+    is_active: bool = True
+    context_type: ContextType = ContextType.FAMILY
+    age_group: AgeGroup = AgeGroup.MIXED
+    include_family: bool = True
+    language: Language = Language.ENGLISH
+    simulated_persons: List[Dict[str, Any]] = field(default_factory=list)
+    simulated_events: List[Dict[str, Any]] = field(default_factory=list)
+    simulated_memories: List[Dict[str, Any]] = field(default_factory=list)
+    simulated_media_items: List[Dict[str, Any]] = field(default_factory=list)
+    simulated_celebrations: List[Dict[str, Any]] = field(default_factory=list)
+    simulated_reminders: List[Dict[str, Any]] = field(default_factory=list)
+    simulated_share_links: List[Dict[str, Any]] = field(default_factory=list)
+    simulated_transactions: List[Dict[str, Any]] = field(default_factory=list)
+    updated_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
 
 
 
