@@ -1,9 +1,9 @@
 # FEMC Canonical Reconciliation Audit Report
 
-**Audit Commit Baseline:** `ffe8105`  
-**Active Branch:** `reconcile/femc-execution-plan`  
-**Date:** August 14, 2026  
-**Status:** COMPLETED — AUDIT & RECONCILIATION ONLY  
+**Audit Commit Baseline:** `ffe8105`<br>
+**Active Branch:** `reconcile/femc-execution-plan`<br>
+**Date:** August 14, 2026<br>
+**Status:** COMPLETED — AUDIT & RECONCILIATION ONLY<br>
 
 ---
 
@@ -89,11 +89,10 @@ The boundary between real user data and simulated practice operations is maintai
 ```mermaid
 graph TD
     UserAction[User Action] --> IsPractice{Is Practice World?}
-    
+
     IsPractice -- Yes --> SimMutation[Mutate MayilPracticeWorld.simulated_* Lists]
     SimMutation --> RecordSimTx[Record Transaction in simulated_transactions]
     RecordSimTx --> ZeroLeak[Zero mutation on CanonicalRepository]
-    
     IsPractice -- No --> RealMutation[Mutate CanonicalRepository Database]
     RealMutation --> RecordRealTx[Record Transaction in TransactionMemoryRepository]
 ```

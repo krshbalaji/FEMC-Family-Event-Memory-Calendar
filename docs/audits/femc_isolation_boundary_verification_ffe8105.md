@@ -1,12 +1,12 @@
 # FEMC Isolation Boundary Verification Report
-**Audit Reference Commit:** `ffe8105`  
-**Classification:** Technical Audit  
+**Audit Reference Commit:** `ffe8105`<br>
+**Classification:** Technical Audit<br>
 **Boundary Status: 🔴 RED (NON-ISOLATED)**
 
 ---
 
 ## Executive Summary
-This audit report documents the forensic verification of the boundary isolation mechanism in the FEMC "Learn-By-Doing" guided experience mode. 
+This audit report documents the forensic verification of the boundary isolation mechanism in the FEMC "Learn-By-Doing" guided experience mode.
 
 The audit establishes that the **"Learn-By-Doing" (Guided Tour) mode has ZERO database isolation in the backend**. Interactive steps designed to let users practice scheduling events, adding memories, or uploading media actually execute on the production databases (`CanonicalRepository` and `DerivedRepository`). These actions persist indefinitely and are not rolled back on tour exit or page reset.
 

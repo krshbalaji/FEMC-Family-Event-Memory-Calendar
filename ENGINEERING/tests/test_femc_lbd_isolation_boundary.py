@@ -13,6 +13,8 @@ from ENGINEERING.source.femc.models import (
 )
 
 class TestHandler(DemoHTTPRequestHandler):
+    __test__ = False
+
     def __init__(self, path, method="GET", body=None):
         self.request_version = "HTTP/1.1"
         self.command = method
@@ -71,7 +73,7 @@ def test_a_event_isolation():
     real_count_before = len(api.canonical.list_events())
 
     api.initialize_guided_experience_for_session(sess_id, fc_id, mode=GuideMode.LEARN_BY_DOING)
-    
+
     pw = api.start_practice_world_for_session(sess_id, fc_id)
     assert pw is not None
     initial_sim_count = len(pw.simulated_events)
@@ -440,7 +442,7 @@ def test_l_session_isolation():
 
     alice_pw = api.start_practice_world_for_session(alice_sess, fc_id)
     bob_pw = api.start_practice_world_for_session(bob_sess, fc_id)
-    
+
     alice_initial = len(alice_pw.simulated_events)
     bob_initial = len(bob_pw.simulated_events)
 
