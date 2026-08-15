@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from .models import (
     ActionType,
@@ -3515,7 +3515,7 @@ class MayilGuidedExperienceService:
 
         explanation = f"You just executed '{action_type.value}' in Mayil's Practice World. FEMC recorded this as a safe simulated transaction."
 
-        return {
+        res_dict = {
             "status": "success",
             "message": current_scene.success_message.get(lang_key, "Great job!"),
             "explanation": explanation,
@@ -3526,6 +3526,100 @@ class MayilGuidedExperienceService:
             "practice_world": pw.__dict__,
             "simulated_transaction": sim_tx,
         }
+
+        if action_type == ActionType.CREATE and resource_type == ResourceType.PERSON:
+            res_dict["account_id"] = f"sim_acc_{new_resource_id}"
+            res_dict["person_id"] = new_resource_id
+            res_dict["session_id"] = f"sim_sess_{new_resource_id}"
+        elif action_type in (ActionType.CREATE, ActionType.PERSPECTIVE_SWITCH) and resource_type == ResourceType.EVENT:
+            from .models import Event, EventStatus, EventCategory, VisibilityLevel
+            cat_str = payload.get("category", "GENERAL").upper()
+            vis_str = payload.get("visibility", "FAMILY").upper()
+            try: cat = EventCategory(cat_str.lower())
+            except ValueError: cat = EventCategory.GENERAL
+            try: vis = VisibilityLevel(vis_str.lower())
+            except ValueError: vis = VisibilityLevel.FAMILY
+
+            now = _utc_now()
+            sim_event = Event(
+                id=new_resource_id,
+                title=payload.get("title", "New Event"),
+                description=payload.get("description", ""),
+                family_context_id=pw.family_context_id,
+                start_time=now + datetime.timedelta(days=1),
+                end_time=now + datetime.timedelta(days=1, hours=2),
+                visibility=vis,
+                category=cat,
+                status=EventStatus.PLANNED,
+            )
+            res_dict["event"] = sim_event
+        elif action_type in (ActionType.CREATE, ActionType.ATTACH) and resource_type == ResourceType.MEMORY:
+            from .models import Memory, VisibilityLevel
+            vis_str = payload.get("visibility", "FAMILY").upper()
+            try: vis = VisibilityLevel(vis_str.lower())
+            except ValueError: vis = VisibilityLevel.FAMILY
+
+            sim_memory = Memory(
+                id=new_resource_id,
+                event_id=payload.get("ref_event_id"),
+                narrative=payload.get("summary", ""),
+                visibility=vis,
+            )
+            res_dict["memory"] = sim_memory
+        elif action_type in (ActionType.ATTACH, ActionType.CREATE) and resource_type in (ResourceType.MEDIA, ResourceType.MEDIA_ALBUM):
+            from .models import MediaItem, MediaType, VisibilityLevel
+            media_type_str = payload.get("type", "PHOTO").lower()
+            vis_str = payload.get("visibility", "FAMILY").upper()
+            try: m_type = MediaType(media_type_str)
+            except ValueError: m_type = MediaType.PHOTO
+            try: vis = VisibilityLevel(vis_str.lower())
+            except ValueError: vis = VisibilityLevel.FAMILY
+
+            sim_med = MediaItem(
+                id=new_resource_id,
+                uri=payload.get("url", ""),
+                media_type=m_type,
+                caption=payload.get("caption", ""),
+                family_context_id=pw.family_context_id,
+                event_id=payload.get("event_id"),
+                memory_id=payload.get("memory_id"),
+                visibility=vis,
+            )
+            res_dict["media_item"] = sim_med
+        elif action_type in (ActionType.CREATE, ActionType.GENERATE) and resource_type == ResourceType.CELEBRATION_ARTIFACT:
+            from .models import CelebrationArtifact
+            sim_artifact = CelebrationArtifact(
+                id=new_resource_id,
+                title=payload.get("title", ""),
+                family_context_id=pw.family_context_id,
+            )
+            res_dict["artifact"] = sim_artifact
+        elif resource_type == ResourceType.SHARE_LINK:
+            from .models import ShareLink, ShareResourceType
+            if action_type == ActionType.REVOKE_SHARE:
+                token = payload.get("token")
+                sim_link = ShareLink(
+                    id="sim_revoked",
+                    token=token,
+                    resource_type=ShareResourceType.EVENT,
+                    resource_id="sim_ev1",
+                    family_context_id=pw.family_context_id,
+                    is_revoked=True,
+                )
+            else:
+                res_type_str = payload.get("resource_type", "EVENT").upper()
+                try: res_type = ShareResourceType(res_type_str.lower())
+                except ValueError: res_type = ShareResourceType.EVENT
+                sim_link = ShareLink(
+                    id=new_resource_id,
+                    token=f"sim_share_{new_resource_id}",
+                    resource_type=res_type,
+                    resource_id=payload.get("target_id"),
+                    family_context_id=pw.family_context_id,
+                )
+            res_dict["share_link"] = sim_link
+
+        return res_dict
 
     def explain_practice_history(self, account_id: str) -> Dict[str, Any]:
         pw = self.practice_worlds.get(account_id)
@@ -3569,5 +3663,117 @@ class MayilGuidedExperienceService:
             "status": "exited",
             "message": "Practice complete. Your real FEMC data was not changed.",
             "is_practice_active": False,
+        }
+
+    def get_practice_members_projection(
+        self,
+        account_sessions: Dict[str, str],
+        active_account_id: str,
+        practice_world: MayilPracticeWorld,
+    ) -> List[Dict[str, Any]]:
+        members_list = []
+        for acc_id, sess_id in account_sessions.items():
+            acc = self.canonical.get_account(acc_id)
+            per = self.canonical.get_person(acc.person_id) if acc and acc.person_id else None
+            if acc and per:
+                members_list.append({
+                    "account_id": acc.id,
+                    "person_id": per.id,
+                    "name": per.name,
+                    "email": acc.email,
+                    "username": acc.username,
+                    "session_id": sess_id,
+                    "is_active": acc.id == active_account_id,
+                })
+        for sp in practice_world.simulated_persons:
+            members_list.append({
+                "account_id": sp["id"],
+                "person_id": sp["id"],
+                "name": sp["name"],
+                "email": sp.get("email", sp["name"].lower().split()[0] + "@example.com"),
+                "username": sp["name"].lower(),
+                "session_id": f"sim_sess_{sp['id']}",
+                "is_active": False,
+            })
+        return members_list
+
+    def get_practice_calendar_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
+        calendar_entries = []
+        for e in practice_world.simulated_events:
+            try:
+                dt = datetime.datetime.strptime(e.get("date", "2026-08-22"), "%Y-%m-%d").date()
+            except Exception:
+                dt = datetime.date(2026, 8, 22)
+            calendar_entries.append({
+                "event_id": e.get("id"),
+                "title": e.get("title"),
+                "date": dt.isoformat(),
+                "status": e.get("status", "UPCOMING"),
+                "visibility": "FAMILY",
+                "family_context_id": practice_world.family_context_id,
+            })
+        return calendar_entries
+
+    def get_practice_event_detail_projection(self, practice_world: MayilPracticeWorld) -> Dict[str, Any]:
+        if not practice_world.simulated_events:
+            return {}
+        e_first = practice_world.simulated_events[-1]
+        return {
+            "event_id": e_first.get("id"),
+            "title": e_first.get("title"),
+            "description": e_first.get("description", ""),
+            "category": "general",
+            "visibility": "family",
+            "status": e_first.get("status", "UPCOMING"),
+        }
+
+    def get_practice_timeline_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
+        timeline_entries = []
+        for m in practice_world.simulated_memories:
+            ref_evt = next((e for e in practice_world.simulated_events if e["id"] == m.get("ref_event_id")), None)
+            evt_date = ref_evt["date"] if ref_evt else "2026-08-22"
+            timeline_entries.append({
+                "event_id": m.get("ref_event_id", "sim_ev1"),
+                "title": m.get("title"),
+                "date": evt_date,
+                "memory_ids": [m.get("id")],
+                "narrative_excerpt": m.get("summary", ""),
+            })
+        return timeline_entries
+
+    def get_practice_media_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
+        items = []
+        for m in practice_world.simulated_media_items:
+            items.append({
+                "id": m.get("id"),
+                "caption": m.get("caption"),
+                "media_type": m.get("type", "PHOTO").lower(),
+                "uri": m.get("url", "/static/demo_sim_media.jpg"),
+            })
+        return items
+
+    def get_practice_celebrations_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
+        return practice_world.simulated_celebrations
+
+    def get_practice_sharing_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
+        return practice_world.simulated_share_links
+
+    def get_practice_history_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
+        return practice_world.simulated_transactions
+
+    def get_practice_export_projection(self, practice_world: MayilPracticeWorld) -> Dict[str, Any]:
+        return {
+            "export_id": "sim_export_001",
+            "family_context_id": practice_world.family_context_id,
+            "exported_at": datetime.datetime.utcnow().isoformat(),
+            "schema_version": "1.0",
+            "records": {
+                "events": practice_world.simulated_events,
+                "memories": practice_world.simulated_memories,
+                "media_items": practice_world.simulated_media_items,
+                "celebrations": practice_world.simulated_celebrations,
+                "share_links": practice_world.simulated_share_links,
+                "transactions": practice_world.simulated_transactions,
+            }
         }
 

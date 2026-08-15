@@ -2746,51 +2746,8 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             }
             self._send_json(res)
         elif path == "/api/members":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                members_list = []
-                for acc_id, sess_id in demo_state.account_sessions.items():
-                    acc = api.canonical.get_account(acc_id)
-                    per = api.canonical.get_person(acc.person_id) if acc and acc.person_id else None
-                    if acc and per:
-                        members_list.append({
-                            "account_id": acc.id,
-                            "person_id": per.id,
-                            "name": per.name,
-                            "email": acc.email,
-                            "username": acc.username,
-                            "session_id": sess_id,
-                            "is_active": acc.id == demo_state.active_account_id,
-                        })
-                for sp in pw.simulated_persons:
-                    members_list.append({
-                        "account_id": sp["id"],
-                        "person_id": sp["id"],
-                        "name": sp["name"],
-                        "email": sp.get("email", sp["name"].lower().split()[0] + "@example.com"),
-                        "username": sp["name"].lower(),
-                        "session_id": f"sim_sess_{sp['id']}",
-                        "is_active": False,
-                    })
-                self._send_json({"members": members_list, "active_account_id": demo_state.active_account_id})
-            else:
-                members_list = []
-                for acc_id, sess_id in demo_state.account_sessions.items():
-                    acc = api.canonical.get_account(acc_id)
-                    per = api.canonical.get_person(acc.person_id) if acc and acc.person_id else None
-                    if acc and per:
-                        members_list.append({
-                            "account_id": acc.id,
-                            "person_id": per.id,
-                            "name": per.name,
-                            "email": acc.email,
-                            "username": acc.username,
-                            "session_id": sess_id,
-                            "is_active": acc.id == demo_state.active_account_id,
-                        })
-                self._send_json({"members": members_list, "active_account_id": demo_state.active_account_id})
+            members_list = api.get_members_projection(session_id, demo_state.account_sessions, demo_state.active_account_id)
+            self._send_json({"members": members_list, "active_account_id": demo_state.active_account_id})
         elif path == "/api/dashboard":
             summary = api.get_dashboard_summary_for_session(session_id, fc_id)
             entries = api.get_dashboard_projection_for_session(session_id, fc_id)
@@ -2802,101 +2759,24 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             active_detail = api.build_rich_person_detail_for_session(session_id, active_person_id)
             self._send_json({"topology": to_dict(topology), "active_person_detail": to_dict(active_detail)})
         elif path == "/api/events":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                calendar_entries = []
-                for e in pw.simulated_events:
-                    try:
-                        dt = datetime.datetime.strptime(e.get("date", "2026-08-22"), "%Y-%m-%d").date()
-                    except Exception:
-                        dt = datetime.date(2026, 8, 22)
-                    calendar_entries.append({
-                        "event_id": e.get("id"),
-                        "title": e.get("title"),
-                        "date": dt.isoformat(),
-                        "status": e.get("status", "UPCOMING"),
-                        "visibility": "FAMILY",
-                        "family_context_id": fc_id,
-                    })
-                det = {}
-                if pw.simulated_events:
-                    e_first = pw.simulated_events[-1]
-                    det = {
-                        "event_id": e_first.get("id"),
-                        "title": e_first.get("title"),
-                        "description": e_first.get("description", ""),
-                        "category": "general",
-                        "visibility": "family",
-                        "status": e_first.get("status", "UPCOMING"),
-                    }
-                self._send_json({"calendar": calendar_entries, "event_detail": det})
-            else:
-                calendar = api.get_calendar_for_session(session_id, fc_id)
-                detail = api.build_rich_event_detail_for_session(session_id, demo_state.event1.id)
-                self._send_json({"calendar": to_dict(calendar), "event_detail": to_dict(detail)})
+            calendar_entries, det = api.get_events_projection(session_id, fc_id, default_event_id=demo_state.event1.id)
+            self._send_json({"calendar": to_dict(calendar_entries), "event_detail": to_dict(det)})
         elif path == "/api/timeline":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                timeline_entries = []
-                for m in pw.simulated_memories:
-                    ref_evt = next((e for e in pw.simulated_events if e["id"] == m.get("ref_event_id")), None)
-                    evt_date = ref_evt["date"] if ref_evt else "2026-08-22"
-                    timeline_entries.append({
-                        "event_id": m.get("ref_event_id", "sim_ev1"),
-                        "title": m.get("title"),
-                        "date": evt_date,
-                        "memory_ids": [m.get("id")],
-                        "narrative_excerpt": m.get("summary", ""),
-                    })
-                self._send_json({"timeline": timeline_entries, "event_memories": {}})
-            else:
-                timeline = api.get_timeline_for_session(session_id, fc_id)
-                event_memories = api.get_event_with_memories_for_session(session_id, demo_state.event1.id)
-                self._send_json({"timeline": to_dict(timeline), "event_memories": to_dict(event_memories)})
+            timeline_entries, event_memories = api.get_timeline_projection(session_id, fc_id, default_event_id=demo_state.event1.id)
+            self._send_json({"timeline": to_dict(timeline_entries), "event_memories": to_dict(event_memories)})
         elif path == "/api/media":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                items = []
-                for m in pw.simulated_media_items:
-                    items.append({
-                        "id": m.get("id"),
-                        "caption": m.get("caption"),
-                        "media_type": m.get("type", "PHOTO").lower(),
-                        "uri": m.get("url", "/static/demo_sim_media.jpg"),
-                    })
-                self._send_json({"items": items, "albums": []})
-            else:
-                items = [m for m in api.canonical.list_media_items() if m.family_context_id == fc_id and api.authorization.can_view_media_item(demo_state.acc_alice.id, m, demo_state.family_context)]
-                albums = [a for a in api.canonical.list_media_albums() if a.family_context_id == fc_id and api.authorization.can_view_media_album(demo_state.acc_alice.id, a, demo_state.family_context)]
-                self._send_json({"items": to_dict(items), "albums": to_dict(albums)})
+            items, albums = api.get_media_projection(session_id, fc_id, user_account_id=demo_state.acc_alice.id)
+            self._send_json({"items": to_dict(items), "albums": to_dict(albums)})
         elif path == "/api/celebrations":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                self._send_json({"artifacts": pw.simulated_celebrations})
-            else:
-                artifacts = api.list_celebration_artifacts_for_session(session_id, fc_id)
-                self._send_json({"artifacts": to_dict(artifacts)})
+            artifacts = api.get_celebrations_projection(session_id, fc_id)
+            self._send_json({"artifacts": to_dict(artifacts)})
         elif path == "/api/reminders":
             notifs = api.list_notifications_for_session(session_id)
             triggered = api.trigger_due_reminders_for_session(session_id, fc_id)
             self._send_json({"notifications": to_dict(notifs), "triggered": to_dict(triggered)})
         elif path == "/api/sharing":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                self._send_json({"share_links": pw.simulated_share_links})
-            else:
-                links = [l for l in api.canonical.list_share_links() if l.family_context_id == fc_id]
-                self._send_json({"share_links": to_dict(links)})
+            share_links = api.get_sharing_projection(session_id, fc_id)
+            self._send_json({"share_links": to_dict(share_links)})
         elif path == "/api/sharing/resolve":
             token = query.get("token", [""])[0]
             if token:
@@ -2931,47 +2811,11 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"session_state": to_dict(st), "scenes": to_dict(scenes)})
             return
         elif path == "/api/export":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                export_data = {
-                    "export_id": "sim_export_001",
-                    "family_context_id": fc_id,
-                    "exported_at": datetime.datetime.utcnow().isoformat(),
-                    "schema_version": "1.0",
-                    "records": {
-                        "events": pw.simulated_events,
-                        "memories": pw.simulated_memories,
-                        "media_items": pw.simulated_media_items,
-                        "celebrations": pw.simulated_celebrations,
-                        "share_links": pw.simulated_share_links,
-                        "transactions": pw.simulated_transactions,
-                    }
-                }
-                self._send_json({"export": export_data, "validation": {"is_valid": True, "errors": [], "warnings": [], "record_counts": {}}})
-            else:
-                export_data = api.export_family_context_for_session(session_id, fc_id)
-                validation = api.validate_data_export(to_dict(export_data))
-                self._send_json({"export": to_dict(export_data), "validation": to_dict(validation)})
+            export_data, validation = api.get_export_projection(session_id, fc_id)
+            self._send_json({"export": to_dict(export_data), "validation": to_dict(validation)})
         elif path == "/api/history":
-            if is_lbd:
-                pw = api.get_practice_world_state_for_session(session_id)
-                if not pw:
-                    pw = api.start_practice_world_for_session(session_id, fc_id)
-                self._send_json({"transactions": pw.simulated_transactions})
-            else:
-                session = demo_state.api._validate_session(demo_state.session_id)
-                history = demo_state.api.get_transaction_history_for_session(
-                    session.session_id, demo_state.family_context.id, limit=50
-                )
-                res = [r.__dict__ for r in history]
-                for r in res:
-                    r['timestamp'] = r['timestamp'].isoformat()
-                    r['action_type'] = str(r['action_type'])
-                    r['resource_type'] = str(r['resource_type'])
-                    r['visibility'] = str(r['visibility'])
-                self._send_json({"transactions": res})
+            transactions = api.get_history_projection(session_id, fc_id)
+            self._send_json({"transactions": to_dict(transactions)})
         elif path.startswith("/api/resource_history"):
             session = demo_state.api._validate_session(demo_state.session_id)
             res_type = query.get('type', ['event'])[0]
@@ -3140,12 +2984,11 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                     session_id, ActionType.CREATE, "btn-onboard", ResourceType.PERSON,
                     {"name": name, "email": email, "relationship": rel}
                 )
-                sim_id = res.get("simulated_transaction", {}).get("resource_id", "sim_per_new")
                 self._send_json({
                     "status": "success",
-                    "account_id": f"sim_acc_{sim_id}",
-                    "person_id": sim_id,
-                    "session_id": f"sim_sess_{sim_id}",
+                    "account_id": res.get("account_id"),
+                    "person_id": res.get("person_id"),
+                    "session_id": res.get("session_id"),
                 })
             else:
                 acc, per, sess = demo_state.onboard_member(name=name, email=email, relationship_type_str=rel)
@@ -3178,20 +3021,7 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                     session_id, ActionType.CREATE, "btn-create-event", ResourceType.EVENT,
                     {"title": title, "description": desc, "date": "2026-08-22", "category": cat_str, "visibility": vis_str}
                 )
-                sim_id = res.get("simulated_transaction", {}).get("resource_id", "sim_ev_new")
-                from ENGINEERING.source.femc.models import Event, EventStatus
-                sim_event = Event(
-                    id=sim_id,
-                    title=title,
-                    description=desc,
-                    family_context_id=fc_id,
-                    start_time=now + datetime.timedelta(days=1),
-                    end_time=now + datetime.timedelta(days=1, hours=2),
-                    visibility=vis,
-                    category=cat,
-                    status=EventStatus.PLANNED,
-                )
-                self._send_json({"status": "success", "event": to_dict(sim_event)})
+                self._send_json({"status": "success", "event": to_dict(res.get("event"))})
             else:
                 event = api.create_event_for_session(
                     session_id=session_id,
@@ -3217,17 +3047,9 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             if is_lbd:
                 res = api.execute_simulated_action_for_session(
                     session_id, ActionType.CREATE, "btn-create-memory", ResourceType.MEMORY,
-                    {"title": "Practice Memory", "summary": narrative, "ref_event_id": evt_id}
+                    {"title": "Practice Memory", "summary": narrative, "ref_event_id": evt_id, "visibility": vis_str}
                 )
-                sim_id = res.get("simulated_transaction", {}).get("resource_id", "sim_mem_new")
-                from ENGINEERING.source.femc.models import Memory
-                sim_memory = Memory(
-                    id=sim_id,
-                    event_id=evt_id,
-                    narrative=narrative,
-                    visibility=vis,
-                )
-                self._send_json({"status": "success", "memory": to_dict(sim_memory)})
+                self._send_json({"status": "success", "memory": to_dict(res.get("memory"))})
             else:
                 memory = api.create_memory_for_session(
                     session_id=session_id,
@@ -3257,21 +3079,9 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             if is_lbd:
                 res = api.execute_simulated_action_for_session(
                     session_id, ActionType.ATTACH, "btn-add-media", ResourceType.MEDIA,
-                    {"caption": caption, "type": media_type_str.upper(), "url": uri}
+                    {"caption": caption, "type": media_type_str.upper(), "url": uri, "visibility": vis_str, "memory_id": mem_id, "event_id": evt_id}
                 )
-                sim_id = res.get("simulated_transaction", {}).get("resource_id", "sim_med_new")
-                from ENGINEERING.source.femc.models import MediaItem
-                sim_med = MediaItem(
-                    id=sim_id,
-                    uri=uri,
-                    media_type=m_type,
-                    caption=caption,
-                    family_context_id=fc_id,
-                    event_id=evt_id,
-                    memory_id=mem_id,
-                    visibility=vis,
-                )
-                self._send_json({"status": "success", "media_item": to_dict(sim_med)})
+                self._send_json({"status": "success", "media_item": to_dict(res.get("media_item"))})
             else:
                 item = api.create_media_item_for_session(
                     session_id=session_id,
@@ -3306,14 +3116,7 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                     session_id, ActionType.GENERATE, "nav-celebrations", ResourceType.CELEBRATION_ARTIFACT,
                     {"title": f"Celebration for {target_type}", "theme": "FESTIVE"}
                 )
-                sim_id = res.get("simulated_transaction", {}).get("resource_id", "sim_cel_new")
-                from ENGINEERING.source.femc.models import CelebrationArtifact
-                sim_artifact = CelebrationArtifact(
-                    id=sim_id,
-                    title=f"Celebration for {target_type}",
-                    family_context_id=fc_id,
-                )
-                self._send_json({"status": "success", "artifact": to_dict(sim_artifact)})
+                self._send_json({"status": "success", "artifact": to_dict(res.get("artifact"))})
             else:
                 if target_type == "event":
                     artifact = api.build_celebration_artifact_for_event_for_session(session_id, target_id)
@@ -3340,18 +3143,9 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             if is_lbd:
                 res = api.execute_simulated_action_for_session(
                     session_id, ActionType.SHARE, "nav-sharing", ResourceType.SHARE_LINK,
-                    {"target_id": res_id}
+                    {"target_id": res_id, "resource_type": res_type_str}
                 )
-                sim_id = res.get("simulated_transaction", {}).get("resource_id", "sim_share_new")
-                from ENGINEERING.source.femc.models import ShareLink
-                sim_link = ShareLink(
-                    id=sim_id,
-                    token=f"sim_share_{sim_id}",
-                    resource_type=res_type,
-                    resource_id=res_id,
-                    family_context_id=fc_id,
-                )
-                self._send_json({"status": "success", "share_link": to_dict(sim_link)})
+                self._send_json({"status": "success", "share_link": to_dict(res.get("share_link"))})
             else:
                 link = api.create_share_link_for_session(
                     session_id=session_id,
@@ -3369,16 +3163,7 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                         session_id, ActionType.REVOKE_SHARE, "btn-revoke", ResourceType.SHARE_LINK,
                         {"token": token}
                     )
-                    from ENGINEERING.source.femc.models import ShareLink
-                    sim_link = ShareLink(
-                        id="sim_revoked",
-                        token=token,
-                        resource_type=ShareResourceType.EVENT,
-                        resource_id="sim_ev1",
-                        family_context_id=fc_id,
-                        is_revoked=True,
-                    )
-                    self._send_json({"status": "success", "share_link": to_dict(sim_link)})
+                    self._send_json({"status": "success", "share_link": to_dict(res.get("share_link"))})
                 else:
                     link = api.revoke_share_link_for_session(session_id, token)
                     self._send_json({"status": "success", "share_link": to_dict(link)})

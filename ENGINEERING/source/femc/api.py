@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from .models import (
     ActionType,
@@ -830,3 +830,119 @@ class FEMCApi:
     def exit_practice_world_for_session(self, session_id: str) -> dict:
         session = self._validate_session(session_id)
         return self.guided_experience.exit_practice_world(session.account_id)
+
+    def _resolve_view_context(self, session_id: str, family_context_id: Optional[str] = None):
+        session = self._validate_session(session_id)
+        fc_id = family_context_id
+        if not fc_id:
+            fc = self.identity.resolve_family_context(session.account_id)
+            if fc:
+                fc_id = fc.id
+        st = self.guided_experience.get_session(session.account_id)
+        is_lbd = st is not None and st.current_mode == GuideMode.LEARN_BY_DOING
+        pw = None
+        if is_lbd:
+            pw = self.guided_experience.practice_worlds.get(session.account_id)
+            if not pw and fc_id:
+                pw = self.guided_experience.get_or_create_practice_world(session.account_id, fc_id)
+        return session, fc_id, pw
+
+    def get_members_projection(self, session_id: str, account_sessions: Dict[str, str], active_account_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id)
+        if pw is not None:
+            return self.guided_experience.get_practice_members_projection(account_sessions, active_account_id, pw)
+        else:
+            members_list = []
+            for acc_id, sess_id in account_sessions.items():
+                acc = self.canonical.get_account(acc_id)
+                per = self.canonical.get_person(acc.person_id) if acc and acc.person_id else None
+                if acc and per:
+                    members_list.append({
+                        "account_id": acc.id,
+                        "person_id": per.id,
+                        "name": per.name,
+                        "email": acc.email,
+                        "username": acc.username,
+                        "session_id": sess_id,
+                        "is_active": acc.id == active_account_id,
+                    })
+            return members_list
+
+    def get_events_projection(self, session_id: str, family_context_id: str, default_event_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
+        if pw is not None:
+            calendar_entries = self.guided_experience.get_practice_calendar_projection(pw)
+            detail = self.guided_experience.get_practice_event_detail_projection(pw)
+            return calendar_entries, detail
+        else:
+            calendar = self.calendar.get_calendar_for_context(session.account_id, fc_id)
+            try:
+                detail = self.dashboard.build_rich_event_detail(session.account_id, default_event_id)
+            except Exception:
+                detail = {}
+            return calendar, detail
+
+    def get_timeline_projection(self, session_id: str, family_context_id: str, default_event_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
+        if pw is not None:
+            timeline_entries = self.guided_experience.get_practice_timeline_projection(pw)
+            return timeline_entries, {}
+        else:
+            timeline = self.timeline.get_timeline_for_family_context_for_account(fc_id, session.account_id)
+            try:
+                event_memories = self.get_event_with_memories_for_session(session_id, default_event_id)
+            except Exception:
+                event_memories = None
+            return timeline, event_memories
+
+    def get_media_projection(self, session_id: str, family_context_id: str, user_account_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
+        if pw is not None:
+            items = self.guided_experience.get_practice_media_projection(pw)
+            return items, []
+        else:
+            items = [m for m in self.canonical.list_media_items() if m.family_context_id == fc_id and self.authorization.can_view_media_item(user_account_id, m, self.canonical.get_family_context(fc_id))]
+            albums = [a for a in self.canonical.list_media_albums() if a.family_context_id == fc_id and self.authorization.can_view_media_album(user_account_id, a, self.canonical.get_family_context(fc_id))]
+            return items, albums
+
+    def get_celebrations_projection(self, session_id: str, family_context_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
+        if pw is not None:
+            return self.guided_experience.get_practice_celebrations_projection(pw)
+        else:
+            return self.celebration_studio.list_celebration_artifacts(session.account_id, fc_id)
+
+    def get_sharing_projection(self, session_id: str, family_context_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
+        if pw is not None:
+            return self.guided_experience.get_practice_sharing_projection(pw)
+        else:
+            return [l for l in self.canonical.list_share_links() if l.family_context_id == fc_id]
+
+    def get_export_projection(self, session_id: str, family_context_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
+        if pw is not None:
+            export_data = self.guided_experience.get_practice_export_projection(pw)
+            validation = {"is_valid": True, "errors": [], "warnings": [], "record_counts": {}}
+            return export_data, validation
+        else:
+            export_data = self.data_portability.export_family_context_for_account(session.account_id, fc_id)
+            serialization = self.data_portability.serialize_family_context(export_data)
+            validation = self.data_portability.validate_data_export(serialization)
+            return serialization, validation
+
+    def get_history_projection(self, session_id: str, family_context_id: str):
+        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
+        if pw is not None:
+            return self.guided_experience.get_practice_history_projection(pw)
+        else:
+            history = self.transaction_memory.get_transaction_history_for_session(
+                session_id, fc_id, limit=50
+            )
+            res = [r.__dict__ for r in history]
+            for r in res:
+                r['timestamp'] = r['timestamp'].isoformat()
+                r['action_type'] = str(r['action_type'])
+                r['resource_type'] = str(r['resource_type'])
+                r['visibility'] = str(r['visibility'])
+            return res
