@@ -3001,6 +3001,7 @@ class MayilGuidedExperienceService:
         self.auth = auth
         self.transaction_service = transaction_service
         self.guided_sessions: Dict[str, GuideSessionState] = {}
+        self.practice_worlds: Dict[str, MayilPracticeWorld] = {}
 
     def initialize_session(
         self,
@@ -3476,6 +3477,16 @@ class MayilGuidedExperienceService:
                 "target_type": resource_type.value,
                 "target_id": payload.get("target_id", "sim_ev1"),
             })
+        elif action_type == ActionType.CREATE and resource_type == ResourceType.PERSON:
+            pw.simulated_persons.append({
+                "id": new_resource_id,
+                "name": payload.get("title", payload.get("name", "Simulated Member")),
+                "email": payload.get("email", "sim_member@example.com"),
+                "relationship": payload.get("relationship", "MEMBER"),
+            })
+        elif action_type == ActionType.REVOKE_SHARE and resource_type == ResourceType.SHARE_LINK:
+            token = payload.get("token")
+            pw.simulated_share_links = [l for l in pw.simulated_share_links if l.get("token") != token]
 
         # Append simulated transaction record
         tx_id = f"sim_tx_{len(pw.simulated_transactions)+1:03d}"
@@ -3484,7 +3495,7 @@ class MayilGuidedExperienceService:
             "action_type": action_type.value,
             "resource_type": resource_type.value,
             "resource_id": new_resource_id,
-            "resource_label": payload.get("title") or payload.get("caption") or control_id,
+            "resource_label": payload.get("title") or payload.get("name") or payload.get("caption") or control_id,
             "details": f"Simulated practice action: {action_type.value} on control '{control_id}'",
             "timestamp": datetime.datetime.utcnow().isoformat(),
             "is_practice": True,

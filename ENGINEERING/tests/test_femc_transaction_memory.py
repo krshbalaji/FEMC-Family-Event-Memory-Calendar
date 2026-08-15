@@ -329,3 +329,174 @@ def test_guardian_repair_recorded_in_transactions():
     history = api.get_transaction_history_for_session(sess_id, fc_id, resource_type=ResourceType.GUARDIAN_EVENT)
     assert len(history) >= 1
     assert history[0].action_type == ActionType.GUARDIAN_REPAIR
+
+
+def test_deterministic_ordering_on_identical_timestamps():
+    state = DemoState()
+    api = state.api
+    sess_id = state.session_alice.session_id
+    fc_id = state.family_context.id
+
+    # 1. Record first transaction (CREATE)
+    rec1 = api.record_transaction_for_session(
+        session_id=sess_id,
+        family_context_id=fc_id,
+        action_type=ActionType.CREATE,
+        resource_type=ResourceType.EVENT,
+        resource_id="evt-dup",
+        resource_label_snapshot="Test Event",
+        operation="Created event",
+    )
+
+    # 2. Record second transaction (DELETE)
+    rec2 = api.record_transaction_for_session(
+        session_id=sess_id,
+        family_context_id=fc_id,
+        action_type=ActionType.DELETE,
+        resource_type=ResourceType.EVENT,
+        resource_id="evt-dup",
+        resource_label_snapshot="Test Event",
+        operation="Deleted event",
+    )
+
+    # Force identical timestamps to simulate execution window collision
+    common_time = datetime.datetime(2026, 8, 14, 12, 0, 0)
+    rec1.timestamp = common_time
+    rec2.timestamp = common_time
+
+    # Query history
+    history = api.get_resource_history_for_session(sess_id, fc_id, ResourceType.EVENT, "evt-dup")
+
+    # Verification:
+    # 1. Two transactions with identical timestamps return newest-first -> pass
+    # 2. DELETE appears before CREATE when DELETE is recorded second -> pass
+    assert len(history) == 2
+    assert history[0].action_type == ActionType.DELETE
+    assert history[1].action_type == ActionType.CREATE
+
+
+def test_deterministic_ordering_share_and_revoke_identical_timestamps():
+    state = DemoState()
+    api = state.api
+    sess_id = state.session_alice.session_id
+    fc_id = state.family_context.id
+
+    rec_share = api.record_transaction_for_session(
+        session_id=sess_id,
+        family_context_id=fc_id,
+        action_type=ActionType.SHARE,
+        resource_type=ResourceType.SHARE_LINK,
+        resource_id="tok-dup",
+        resource_label_snapshot="Token link",
+        operation="Shared link",
+    )
+    rec_revoke = api.record_transaction_for_session(
+        session_id=sess_id,
+        family_context_id=fc_id,
+        action_type=ActionType.REVOKE_SHARE,
+        resource_type=ResourceType.SHARE_LINK,
+        resource_id="tok-dup",
+        resource_label_snapshot="Token link",
+        operation="Revoked link",
+    )
+
+    # Force identical timestamps
+    common_time = datetime.datetime(2026, 8, 14, 12, 0, 0)
+    rec_share.timestamp = common_time
+    rec_revoke.timestamp = common_time
+
+    # Query history
+    history = api.get_resource_history_for_session(sess_id, fc_id, ResourceType.SHARE_LINK, "tok-dup")
+
+    # Verification:
+    # 3. REVOKE_SHARE appears before SHARE when recorded second -> pass
+    assert len(history) == 2
+    assert history[0].action_type == ActionType.REVOKE_SHARE
+    assert history[1].action_type == ActionType.SHARE
+
+
+def test_normal_timestamp_ordering_distinct_timestamps():
+    state = DemoState()
+    api = state.api
+    sess_id = state.session_alice.session_id
+    fc_id = state.family_context.id
+
+    # Record first transaction (sequence = X, but set to NEWER timestamp)
+    rec1 = api.record_transaction_for_session(
+        session_id=sess_id,
+        family_context_id=fc_id,
+        action_type=ActionType.CREATE,
+        resource_type=ResourceType.EVENT,
+        resource_id="evt-distinct",
+        resource_label_snapshot="Event",
+        operation="Created",
+    )
+    # Record second transaction (sequence = X+1, but set to OLDER timestamp)
+    rec2 = api.record_transaction_for_session(
+        session_id=sess_id,
+        family_context_id=fc_id,
+        action_type=ActionType.UPDATE,
+        resource_type=ResourceType.EVENT,
+        resource_id="evt-distinct",
+        resource_label_snapshot="Event",
+        operation="Updated",
+    )
+
+    # Set distinct timestamps: rec1 is NEWER (1:00 PM) than rec2 (12:00 PM)
+    rec1.timestamp = datetime.datetime(2026, 8, 14, 13, 0, 0)
+    rec2.timestamp = datetime.datetime(2026, 8, 14, 12, 0, 0)
+
+    # Query history
+    history = api.get_resource_history_for_session(sess_id, fc_id, ResourceType.EVENT, "evt-distinct")
+
+    # Verification:
+    # 4. Normal timestamp ordering still works (independent of sequence if timestamps are distinct)
+    assert len(history) == 2
+    assert history[0].action_type == ActionType.CREATE
+    assert history[1].action_type == ActionType.UPDATE
+
+
+def test_additional_fix_verification_requirements():
+    state = DemoState()
+    api = state.api
+    sess_id = state.session_alice.session_id
+    fc_id = state.family_context.id
+    cid = "journey-chain-regression-99"
+
+    # 5. Correlation chains remain functional
+    api.record_transaction_for_session(
+        session_id=sess_id, family_context_id=fc_id, action_type=ActionType.CREATE,
+        resource_type=ResourceType.EVENT, resource_id="ev-reg-1", resource_label_snapshot="Event",
+        operation="Created event", correlation_id=cid
+    )
+    api.record_transaction_for_session(
+        session_id=sess_id, family_context_id=fc_id, action_type=ActionType.ATTACH,
+        resource_type=ResourceType.MEDIA, resource_id="media-reg-1", resource_label_snapshot="Photo",
+        operation="Attached photo", correlation_id=cid
+    )
+    chain = api.transaction_memory.get_correlation_chain(state.session_alice.account_id, fc_id, cid)
+    assert len(chain) == 2
+
+    # 6. Existing privacy authorization remains functional
+    # Alice records a PRIVATE transaction
+    api.record_transaction_for_session(
+        session_id=sess_id,
+        family_context_id=fc_id,
+        action_type=ActionType.CREATE,
+        resource_type=ResourceType.MEMORY,
+        resource_id="private-reg-mem-1",
+        resource_label_snapshot="Alice Secret Diary",
+        operation="Created private memory entry",
+        visibility=VisibilityLevel.PRIVATE,
+    )
+    alice_hist = api.get_transaction_history_for_session(sess_id, fc_id)
+    assert any(r.resource_id == "private-reg-mem-1" for r in alice_hist)
+
+    bob_sess = state.session_bob.session_id
+    bob_hist = api.get_transaction_history_for_session(bob_sess, fc_id)
+    assert not any(r.resource_id == "private-reg-mem-1" for r in bob_hist)
+
+    # 7. Export transaction history remains functional
+    export_res = api.export_family_context_for_session(sess_id, fc_id)
+    assert "transactions" in export_res.records
+    assert len(export_res.records["transactions"]) >= 3

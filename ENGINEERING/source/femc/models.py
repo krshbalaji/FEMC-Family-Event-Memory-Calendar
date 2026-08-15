@@ -178,6 +178,8 @@ class TransactionRecord:
     reason: Optional[str] = None
     related_resource_ids: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    sequence: int = 0
+
 
 
 

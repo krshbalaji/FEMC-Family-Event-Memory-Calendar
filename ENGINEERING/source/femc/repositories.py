@@ -343,8 +343,11 @@ class DerivedRepository:
 class TransactionMemoryRepository:
     def __init__(self) -> None:
         self.records: List[TransactionRecord] = []
+        self._next_sequence = 0
 
     def record_transaction(self, record: TransactionRecord) -> TransactionRecord:
+        record.sequence = self._next_sequence
+        self._next_sequence += 1
         self.records.append(record)
         return record
 
@@ -369,7 +372,7 @@ class TransactionMemoryRepository:
         if correlation_id:
             results = [r for r in results if r.correlation_id == correlation_id]
 
-        results.sort(key=lambda x: x.timestamp, reverse=True)
+        results.sort(key=lambda x: (x.timestamp, x.sequence), reverse=True)
         if limit and limit > 0:
             return results[:limit]
         return results
