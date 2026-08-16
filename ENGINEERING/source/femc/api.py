@@ -62,7 +62,6 @@ from .models import (
     MayilPracticeWorld,
 )
 
-
 from .repositories import CanonicalRepository, DerivedRepository, TransactionMemoryRepository
 from .services import (
     MayilGuidedExperienceService,
@@ -130,14 +129,6 @@ class FEMCApi:
         self.transaction_memory = TransactionMemoryService(self.transaction_repository, self.canonical, self.authorization)
         self.data_portability.transaction_service = self.transaction_memory
         self.guided_experience = MayilGuidedExperienceService(self.canonical, self.derived, self.authorization, self.transaction_memory)
-
-
-
-
-
-
-
-
 
     def create_session(self, account_id: str, duration_minutes: int = 60):
         return self.identity.create_session(account_id, duration_minutes=duration_minutes)
@@ -239,8 +230,6 @@ class FEMCApi:
             current_time=current_time,
         )
 
-
-
     def get_event_for_session(self, session_id: str, event_id: str) -> Event:
         session = self._validate_session(session_id)
         return self.event.get_event_for_account(event_id, session.account_id)
@@ -268,7 +257,6 @@ class FEMCApi:
     ) -> Event:
         session = self._validate_session(session_id)
         return self.event.update_event_status(session.account_id, event_id, status)
-
 
     def create_memory_for_session(
         self,
@@ -458,7 +446,7 @@ class FEMCApi:
     ) -> List[TimelineProjectionEntry]:
         session = self._validate_session(session_id)
         return self.timeline.get_timeline_for_family_context_for_account(
-            family_context_id=family_context_id, account_id=session.account_id, limit=limit
+            family_context_id, session.account_id, limit=limit
         )
 
     def create_notification_for_session(
@@ -521,428 +509,80 @@ class FEMCApi:
         session = self._validate_session(session_id)
         return self.sharing.revoke_share_link(token, session.account_id)
 
-    def export_family_context_for_session(self, session_id: str, family_context_id: str) -> DataExportResult:
+    def get_memory_bundle_for_session(self, session_id: str, memory_id: str) -> Dict[str, object]:
+        """Build one authorized presentation bundle for the Memory target UI."""
         session = self._validate_session(session_id)
-        return self.data_portability.export_family_context_for_account(
-            account_id=session.account_id, family_context_id=family_context_id
-        )
+        memory = self.memory.get_memory_for_account(memory_id, session.account_id)
 
-    def validate_data_export(self, payload: dict) -> ExportValidationResult:
-        return self.data_portability.validate_data_export(payload)
+        event = self.canonical.get_event(memory.event_id) if memory.event_id else None
+        if event is not None:
+            self.event.get_event_for_account(event.id, session.account_id)
 
-    def analyze_family_insights_for_session(self, session_id: str, family_context_id: str) -> InsightAnalysis:
-        session = self._validate_session(session_id)
-        return self.mayil.generate_insights(session.account_id, family_context_id)
+        context = None
+        if event and event.family_context_id:
+            context = self.canonical.get_family_context(event.family_context_id)
+        if context is None:
+            context = self.identity.resolve_family_context(session.account_id)
 
-    def propose_event_recommendation_for_session(
-        self,
-        session_id: str,
-        family_context_id: str,
-        title: str,
-        description: str,
-        start_time: Optional[datetime.datetime] = None,
-    ) -> ActionProposal:
-        session = self._validate_session(session_id)
-        return self.mayil.propose_event_recommendation(
-            account_id=session.account_id,
-            family_context_id=family_context_id,
-            title=title,
-            description=description,
-            start_time=start_time,
-        )
+        person = self.canonical.get_person(memory.subject_id)
+        media_items = self.media.list_media_items_for_memory_for_account(memory.id, session.account_id)
+        return {
+            "memory": memory,
+            "event": event,
+            "person": person,
+            "family_context": context,
+            "media_items": media_items,
+        }
 
-    def get_action_proposals_for_session(self, session_id: str, family_context_id: str) -> List[ActionProposal]:
-        session = self._validate_session(session_id)
-        return self.mayil.list_proposals_for_account(session.account_id, family_context_id)
+    def get_share_resource_bundle(self, token: str) -> Dict[str, object]:
+        """Resolve a share token to its exact authorized resource and context."""
+        resource = self.sharing.resolve_share_token(token)
 
-    def approve_action_proposal_for_session(self, session_id: str, proposal_id: str) -> ActionProposal:
-        session = self._validate_session(session_id)
-        return self.mayil.approve_action_proposal(session.account_id, proposal_id)
+        if isinstance(resource, Event):
+            return {
+                "resource_type": ShareResourceType.EVENT.value,
+                "resource": resource,
+                "media_items": self.media.list_media_items_for_event_for_account(
+                    resource.id, resource.owner_id
+                ),
+            }
 
-    def reject_action_proposal_for_session(self, session_id: str, proposal_id: str) -> ActionProposal:
-        session = self._validate_session(session_id)
-        return self.mayil.reject_action_proposal(session.account_id, proposal_id)
-
-    def run_integrity_audit_for_session(self, session_id: str, family_context_id: str) -> ValidationReport:
-        session = self._validate_session(session_id)
-        return self.guardian.run_integrity_audit(session.account_id, family_context_id)
-
-    def get_repair_proposals_for_session(self, session_id: str, family_context_id: str) -> List[RepairProposal]:
-        session = self._validate_session(session_id)
-        return self.guardian.get_repair_proposals(session.account_id, family_context_id)
-
-    def execute_repair_proposal_for_session(self, session_id: str, proposal_id: str) -> RepairProposal:
-        session = self._validate_session(session_id)
-        return self.guardian.execute_repair_proposal(session.account_id, proposal_id)
-
-    def build_celebration_artifact_for_event_for_session(
-        self,
-        session_id: str,
-        event_id: str,
-        attach_as_media: bool = False,
-    ) -> CelebrationArtifact:
-        session = self._validate_session(session_id)
-        return self.celebration_studio.build_celebration_artifact_for_event(
-            session.account_id,
-            event_id,
-            attach_as_media=attach_as_media,
-        )
-
-    def build_celebration_artifact_for_person_for_session(
-        self,
-        session_id: str,
-        person_id: str,
-        family_context_id: str,
-        attach_as_media: bool = False,
-    ) -> CelebrationArtifact:
-        session = self._validate_session(session_id)
-        return self.celebration_studio.build_celebration_artifact_for_person(
-            session.account_id,
-            person_id,
-            family_context_id,
-            attach_as_media=attach_as_media,
-        )
-
-    def build_celebration_artifact_for_memory_for_session(
-        self,
-        session_id: str,
-        memory_id: str,
-        attach_as_media: bool = False,
-    ) -> CelebrationArtifact:
-        session = self._validate_session(session_id)
-        return self.celebration_studio.build_celebration_artifact_for_memory(
-            session.account_id,
-            memory_id,
-            attach_as_media=attach_as_media,
-        )
-
-    def build_celebration_album_artifact_for_session(
-        self,
-        session_id: str,
-        album_id: str,
-        attach_as_media: bool = False,
-    ) -> CelebrationArtifact:
-        session = self._validate_session(session_id)
-        return self.celebration_studio.build_celebration_album_artifact(
-            session.account_id,
-            album_id,
-            attach_as_media=attach_as_media,
-        )
-
-    def get_celebration_artifact_for_session(self, session_id: str, artifact_id: str) -> Optional[CelebrationArtifact]:
-        session = self._validate_session(session_id)
-        return self.celebration_studio.get_celebration_artifact_for_account(artifact_id, session.account_id)
-
-    def list_celebration_artifacts_for_session(self, session_id: str, family_context_id: str) -> List[CelebrationArtifact]:
-        session = self._validate_session(session_id)
-        return self.celebration_studio.list_celebration_artifacts_for_context_for_account(family_context_id, session.account_id)
-
-    def record_transaction_for_session(
-        self,
-        session_id: str,
-        family_context_id: str,
-        action_type: ActionType,
-        resource_type: ResourceType,
-        resource_id: str,
-        resource_label_snapshot: str,
-        operation: str,
-        visibility: VisibilityLevel = VisibilityLevel.FAMILY,
-        correlation_id: Optional[str] = None,
-        parent_transaction_id: Optional[str] = None,
-        changed_fields: Optional[dict] = None,
-        reason: Optional[str] = None,
-        related_resource_ids: Optional[List[str]] = None,
-    ) -> TransactionRecord:
-        session = self._validate_session(session_id)
-        if not session:
-            raise PermissionError("Invalid session")
-        account = self.canonical.get_account(session.account_id)
-        actor_person_id = account.person_id if account else None
-
-        return self.transaction_memory.record_transaction(
-            actor_account_id=session.account_id,
-            actor_person_id=actor_person_id,
-            family_context_id=family_context_id,
-            action_type=action_type,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            resource_label_snapshot=resource_label_snapshot,
-            operation=operation,
-            visibility=visibility,
-            correlation_id=correlation_id,
-            parent_transaction_id=parent_transaction_id,
-            changed_fields=changed_fields,
-            reason=reason,
-            related_resource_ids=related_resource_ids,
-        )
-
-    def get_transaction_history_for_session(
-        self,
-        session_id: str,
-        family_context_id: str,
-        resource_type: Optional[ResourceType] = None,
-        resource_id: Optional[str] = None,
-        limit: int = 50,
-    ) -> List[TransactionRecord]:
-        session = self._validate_session(session_id)
-        if not session:
-            raise PermissionError("Invalid session")
-        return self.transaction_memory.get_transaction_history_for_session(
-            account_id=session.account_id,
-            family_context_id=family_context_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            limit=limit,
-        )
-
-    def get_resource_history_for_session(
-        self,
-        session_id: str,
-        family_context_id: str,
-        resource_type: ResourceType,
-        resource_id: str,
-    ) -> List[TransactionRecord]:
-        session = self._validate_session(session_id)
-        if not session:
-            raise PermissionError("Invalid session")
-        return self.transaction_memory.get_resource_history_for_session(
-            account_id=session.account_id,
-            family_context_id=family_context_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-        )
-
-    def explain_resource_history_for_session(
-        self,
-        session_id: str,
-        family_context_id: str,
-        resource_type: ResourceType,
-        resource_id: str,
-    ) -> dict:
-        session = self._validate_session(session_id)
-        if not session:
-            raise PermissionError("Invalid session")
-        return self.transaction_memory.explain_resource_history(
-            account_id=session.account_id,
-            family_context_id=family_context_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-        )
-
-    def initialize_guided_experience_for_session(
-        self,
-        session_id: str,
-        family_context_id: str,
-        mode: GuideMode = GuideMode.LEARN_BY_DOING,
-        context_type: ContextType = ContextType.FAMILY,
-        age_group: AgeGroup = AgeGroup.MIXED,
-        include_family: bool = True,
-        language: Language = Language.ENGLISH,
-    ) -> GuideSessionState:
-        session = self._validate_session(session_id)
-        return self.guided_experience.initialize_session(
-            account_id=session.account_id,
-            family_context_id=family_context_id,
-            mode=mode,
-            context_type=context_type,
-            age_group=age_group,
-            include_family=include_family,
-            language=language,
-        )
-
-    def get_guided_experience_state_for_session(self, session_id: str) -> Optional[GuideSessionState]:
-        session = self._validate_session(session_id)
-        return self.guided_experience.get_session(session.account_id)
-
-    def get_shared_journey_scenes_for_session(self, session_id: str) -> List[SceneDefinition]:
-        session = self._validate_session(session_id)
-        st = self.guided_experience.get_session(session.account_id)
-        ctx = st.context_type if st else ContextType.FAMILY
-        lang = st.language if st else Language.ENGLISH
-        return self.guided_experience.get_shared_journey_scenes(ctx, lang)
-
-    def validate_guided_action_for_session(
-        self,
-        session_id: str,
-        action_type: ActionType,
-        control_id: str,
-        resource_id: str = "",
-        resource_label: str = "",
-        operation: str = "",
-    ) -> dict:
-        session = self._validate_session(session_id)
-        return self.guided_experience.validate_user_action(
-            account_id=session.account_id,
-            action_type=action_type,
-            control_id=control_id,
-            resource_id=resource_id,
-            resource_label=resource_label,
-            operation=operation,
-        )
-
-    def switch_guided_experience_mode_for_session(self, session_id: str, new_mode: GuideMode) -> GuideSessionState:
-        session = self._validate_session(session_id)
-        return self.guided_experience.switch_mode(session.account_id, new_mode)
-
-    def reset_guided_experience_for_session(self, session_id: str) -> GuideSessionState:
-        session = self._validate_session(session_id)
-        return self.guided_experience.reset_guided_session(session.account_id)
-
-    def start_practice_world_for_session(
-        self,
-        session_id: str,
-        family_context_id: str,
-        context_type: ContextType = ContextType.FAMILY,
-        age_group: AgeGroup = AgeGroup.MIXED,
-        include_family: bool = True,
-        language: Language = Language.ENGLISH,
-    ) -> MayilPracticeWorld:
-        session = self._validate_session(session_id)
-        return self.guided_experience.get_or_create_practice_world(
-            session.account_id, family_context_id, context_type, age_group, include_family, language
-        )
-
-    def get_practice_world_state_for_session(self, session_id: str) -> Optional[MayilPracticeWorld]:
-        session = self._validate_session(session_id)
-        return getattr(self.guided_experience, "practice_worlds", {}).get(session.account_id)
-
-    def execute_simulated_action_for_session(
-        self,
-        session_id: str,
-        action_type: ActionType,
-        control_id: str,
-        resource_type: ResourceType = ResourceType.EVENT,
-        payload: Optional[dict] = None,
-    ) -> dict:
-        session = self._validate_session(session_id)
-        return self.guided_experience.execute_simulated_action(
-            session.account_id, action_type, control_id, resource_type, payload
-        )
-
-    def explain_practice_history_for_session(self, session_id: str) -> dict:
-        session = self._validate_session(session_id)
-        return self.guided_experience.explain_practice_history(session.account_id)
-
-    def reset_practice_world_for_session(self, session_id: str) -> MayilPracticeWorld:
-        session = self._validate_session(session_id)
-        return self.guided_experience.reset_practice_world(session.account_id)
-
-    def exit_practice_world_for_session(self, session_id: str) -> dict:
-        session = self._validate_session(session_id)
-        return self.guided_experience.exit_practice_world(session.account_id)
-
-    def _resolve_view_context(self, session_id: str, family_context_id: Optional[str] = None):
-        session = self._validate_session(session_id)
-        fc_id = family_context_id
-        if not fc_id:
-            fc = self.identity.resolve_family_context(session.account_id)
-            if fc:
-                fc_id = fc.id
-        st = self.guided_experience.get_session(session.account_id)
-        is_lbd = st is not None and st.current_mode == GuideMode.LEARN_BY_DOING
-        pw = None
-        if is_lbd:
-            pw = self.guided_experience.practice_worlds.get(session.account_id)
-            if not pw and fc_id:
-                pw = self.guided_experience.get_or_create_practice_world(session.account_id, fc_id)
-        return session, fc_id, pw
-
-    def get_members_projection(self, session_id: str, account_sessions: Dict[str, str], active_account_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id)
-        if pw is not None:
-            return self.guided_experience.get_practice_members_projection(account_sessions, active_account_id, pw)
-        else:
-            members_list = []
-            for acc_id, sess_id in account_sessions.items():
-                acc = self.canonical.get_account(acc_id)
-                per = self.canonical.get_person(acc.person_id) if acc and acc.person_id else None
-                if acc and per:
-                    members_list.append({
-                        "account_id": acc.id,
-                        "person_id": per.id,
-                        "name": per.name,
-                        "email": acc.email,
-                        "username": acc.username,
-                        "session_id": sess_id,
-                        "is_active": acc.id == active_account_id,
-                    })
-            return members_list
-
-    def get_events_projection(self, session_id: str, family_context_id: str, default_event_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
-        if pw is not None:
-            calendar_entries = self.guided_experience.get_practice_calendar_projection(pw)
-            detail = self.guided_experience.get_practice_event_detail_projection(pw)
-            return calendar_entries, detail
-        else:
-            calendar = self.calendar.get_calendar_for_context(session.account_id, fc_id)
-            try:
-                detail = self.dashboard.build_rich_event_detail(session.account_id, default_event_id)
-            except Exception:
-                detail = {}
-            return calendar, detail
-
-    def get_timeline_projection(self, session_id: str, family_context_id: str, default_event_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
-        if pw is not None:
-            timeline_entries = self.guided_experience.get_practice_timeline_projection(pw)
-            return timeline_entries, {}
-        else:
-            timeline = self.timeline.get_timeline_for_family_context_for_account(fc_id, session.account_id)
-            try:
-                event_memories = self.get_event_with_memories_for_session(session_id, default_event_id)
-            except Exception:
-                event_memories = None
-            return timeline, event_memories
-
-    def get_media_projection(self, session_id: str, family_context_id: str, user_account_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
-        if pw is not None:
-            items = self.guided_experience.get_practice_media_projection(pw)
-            return items, []
-        else:
-            items = [m for m in self.canonical.list_media_items() if m.family_context_id == fc_id and self.authorization.can_view_media_item(user_account_id, m, self.canonical.get_family_context(fc_id))]
-            albums = [a for a in self.canonical.list_media_albums() if a.family_context_id == fc_id and self.authorization.can_view_media_album(user_account_id, a, self.canonical.get_family_context(fc_id))]
-            return items, albums
-
-    def get_celebrations_projection(self, session_id: str, family_context_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
-        if pw is not None:
-            return self.guided_experience.get_practice_celebrations_projection(pw)
-        else:
-            return self.celebration_studio.list_celebration_artifacts(session.account_id, fc_id)
-
-    def get_sharing_projection(self, session_id: str, family_context_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
-        if pw is not None:
-            return self.guided_experience.get_practice_sharing_projection(pw)
-        else:
-            return [l for l in self.canonical.list_share_links() if l.family_context_id == fc_id]
-
-    def get_export_projection(self, session_id: str, family_context_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
-        if pw is not None:
-            export_data = self.guided_experience.get_practice_export_projection(pw)
-            validation = {"is_valid": True, "errors": [], "warnings": [], "record_counts": {}}
-            return export_data, validation
-        else:
-            export_data = self.data_portability.export_family_context_for_account(session.account_id, fc_id)
-            serialization = self.data_portability.serialize_family_context(export_data)
-            validation = self.data_portability.validate_data_export(serialization)
-            return serialization, validation
-
-    def get_history_projection(self, session_id: str, family_context_id: str):
-        session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
-        if pw is not None:
-            return self.guided_experience.get_practice_history_projection(pw)
-        else:
-            history = self.transaction_memory.get_transaction_history_for_session(
-                session_id, fc_id, limit=50
+        if isinstance(resource, Memory):
+            event = self.canonical.get_event(resource.event_id) if resource.event_id else None
+            media_items = self.media.list_media_items_for_memory_for_account(
+                resource.id, resource.provenance.created_by_id if resource.provenance else resource.subject_id
             )
-            res = [r.__dict__ for r in history]
-            for r in res:
-                r['timestamp'] = r['timestamp'].isoformat()
-                r['action_type'] = str(r['action_type'])
-                r['resource_type'] = str(r['resource_type'])
-                r['visibility'] = str(r['visibility'])
-            return res
+            return {
+                "resource_type": ShareResourceType.MEMORY.value,
+                "resource": resource,
+                "event": event,
+                "person": self.canonical.get_person(resource.subject_id),
+                "media_items": media_items,
+            }
+
+        if isinstance(resource, MediaItem):
+            return {
+                "resource_type": ShareResourceType.MEDIA_ITEM.value,
+                "resource": resource,
+                "memory": self.canonical.get_memory(resource.memory_id) if resource.memory_id else None,
+                "event": self.canonical.get_event(resource.event_id) if resource.event_id else None,
+            }
+
+        if isinstance(resource, MediaAlbum):
+            return {
+                "resource_type": ShareResourceType.MEDIA_ALBUM.value,
+                "resource": resource,
+                "media_items": [
+                    self.canonical.get_media_item(media_id)
+                    for media_id in resource.media_ids
+                    if self.canonical.get_media_item(media_id) is not None
+                ],
+            }
+
+        if isinstance(resource, CelebrationArtifact):
+            return {
+                "resource_type": "celebration_artifact",
+                "resource": resource,
+            }
+
+        raise ValueError("Unsupported share resource")
