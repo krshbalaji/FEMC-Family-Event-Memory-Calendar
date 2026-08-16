@@ -55,6 +55,187 @@ def generate_media_download_filename(caption: str, media_type: str, date_str: st
     return f"{clean}_{date_str}{ext}"
 
 
+def _render_share_page(api, token):
+    try:
+        resource = api.sharing.resolve_share_token(token)
+    except ValueError:
+        return _render_share_error_page("Share link not found", "This share link does not exist. It may have been removed.")
+    except PermissionError as e:
+        return _render_share_error_page("Access denied", str(e))
+    except Exception as e:
+        return _render_share_error_page("Share link unavailable", str(e))
+
+    res_type = type(resource).__name__
+    fmt_dt = lambda d: d.strftime("%b %d, %Y %I:%M %p") if d else "—"
+    content_html = ""
+
+    def person_name(pid):
+        p = api.canonical.get_person(pid) if pid else None
+        return p.name if p else "Family member"
+
+    def place_name(pid):
+        p = api.canonical.get_place(pid) if pid else None
+        return p.name if p else ""
+
+    if res_type == "Event":
+        badge = "EVENT"
+        title = resource.title or "Untitled event"
+        lines = [("<strong>Description</strong>", resource.description or "—")]
+        lines.append(("<strong>Date</strong>", fmt_dt(resource.start_time)))
+        if resource.end_time:
+            lines.append(("<strong>Until</strong>", fmt_dt(resource.end_time)))
+        lines.append(("<strong>Category</strong>", str(resource.category.value) if hasattr(resource.category, "value") else str(resource.category)))
+        lines.append(("<strong>Status</strong>", str(resource.status.value) if hasattr(resource.status, "value") else str(resource.status)))
+        if resource.milestone_year:
+            lines.append(("<strong>Milestone year</strong>", str(resource.milestone_year)))
+        if resource.place_id:
+            pn = place_name(resource.place_id)
+            if pn:
+                lines.append(("<strong>Place</strong>", pn))
+        if resource.target_person_ids:
+            lines.append(("<strong>People</strong>", ", ".join(person_name(pid) for pid in resource.target_person_ids)))
+        media_html = ""
+    elif res_type == "Memory":
+        badge = "MEMORY"
+        title = "Shared Memory"
+        lines = [("<strong>Story</strong>", resource.narrative or "—")]
+        lines.append(("<strong>Recorded</strong>", fmt_dt(resource.recorded_at)))
+        if resource.event_id:
+            ev = api.canonical.get_event(resource.event_id)
+            if ev:
+                lines.append(("<strong>Event</strong>", ev.title))
+        if resource.subject_id:
+            lines.append(("<strong>About</strong>", person_name(resource.subject_id)))
+        media_html = ""
+    elif res_type == "MediaItem":
+        badge = "MEDIA"
+        title = resource.caption or "Family media"
+        lines = [("<strong>Caption</strong>", resource.caption or "—")]
+        lines.append(("<strong>Type</strong>", str(resource.media_type.value) if hasattr(resource.media_type, "value") else str(resource.media_type)))
+        if resource.memory_id:
+            mem = api.canonical.get_memory(resource.memory_id)
+            if mem:
+                lines.append(("<strong>Memory</strong>", mem.narrative[:120] + ("…" if len(mem.narrative) > 120 else "")))
+        if resource.event_id:
+            ev = api.canonical.get_event(resource.event_id)
+            if ev:
+                lines.append(("<strong>Event</strong>", ev.title))
+        media_html = f'<img src="{resource.uri}" alt="Shared media" style="max-width:100%; max-height:420px; border-radius:10px; border:1px solid var(--card-border);" />' if (resource.media_type and hasattr(resource.media_type, "value") and resource.media_type.value == "photo") else f'<a href="{resource.uri}" target="_blank" rel="noopener">Open media file</a>'
+    elif res_type == "MediaAlbum":
+        badge = "ALBUM"
+        title = resource.title or "Family album"
+        lines = [("<strong>Description</strong>", resource.description or "—")]
+        lines.append(("<strong>Media items</strong>", str(len(resource.media_ids or []))))
+        previews = []
+        for mid in (resource.media_ids or [])[:4]:
+            it = api.canonical.get_media_item(mid)
+            if it and it.uri:
+                previews.append(f'<img src="{it.uri}" alt="" style="width:110px; height:82px; object-fit:cover; border-radius:6px; border:1px solid var(--card-border);" />')
+        media_html = f'<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;">{"".join(previews)}</div>' if previews else ""
+    elif res_type == "CelebrationArtifact":
+        badge = "CELEBRATION"
+        title = resource.title or "Celebration"
+        lines = [("<strong>Artifact</strong>", str(resource.artifact_type.value) if hasattr(resource.artifact_type, "value") else str(resource.artifact_type))]
+        if resource.subtitle:
+            lines.append(("<strong>Subtitle</strong>", resource.subtitle))
+        if resource.source_event_id:
+            ev = api.canonical.get_event(resource.source_event_id)
+            if ev:
+                lines.append(("<strong>Event</strong>", ev.title))
+        if resource.source_person_id:
+            lines.append(("<strong>Person</strong>", person_name(resource.source_person_id)))
+        if resource.media_item_id:
+            it = api.canonical.get_media_item(resource.media_item_id)
+            if it and it.uri:
+                media_html = f'<img src="{it.uri}" alt="Celebration media" style="max-width:100%; max-height:360px; border-radius:10px; border:1px solid var(--card-border);" />'
+            else:
+                media_html = ""
+        else:
+            media_html = ""
+        content_html = f'<div style="margin-top:12px; padding:12px; background:rgba(0,0,0,0.25); border:1px solid var(--card-border); border-radius:8px; white-space:pre-wrap;">{resource.rendered_content or ""}</div>' if resource.rendered_content else ""
+    else:
+        badge = "RESOURCE"
+        title = "Shared resource"
+        lines = []
+        media_html = ""
+
+    body_rows = "".join(
+        f'<div style="display:flex; gap:12px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.06);"><div style="min-width:120px; color:var(--text-sub); font-weight:600;">{k}</div><div>{v}</div></div>'
+        for k, v in lines
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} — Shared via FEMC</title>
+<style>
+    :root {{ --bg-dark:#0f172a; --card-bg:#1e293b; --card-border:#334155; --accent:#38bdf8; --text-main:#f8fafc; --text-sub:#94a3b8; }}
+    * {{ box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }}
+    body {{ background:var(--bg-dark); color:var(--text-main); min-height:100vh; }}
+    header {{ background:var(--card-bg); border-bottom:1px solid var(--card-border); padding:0.85rem 1.5rem; display:flex; align-items:center; gap:0.5rem; }}
+    .logo {{ font-size:1.1rem; font-weight:700; }}
+    .logo-badge {{ background:var(--accent); color:#000; font-size:0.7rem; padding:0.15rem 0.5rem; border-radius:4px; font-weight:800; }}
+    .wrap {{ max-width:760px; margin:2rem auto; padding:0 1.25rem; }}
+    .card {{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:12px; padding:1.5rem; }}
+    .badge {{ display:inline-block; background:rgba(56,189,248,0.2); color:var(--accent); font-size:0.75rem; font-weight:800; letter-spacing:0.06em; padding:0.25rem 0.7rem; border-radius:999px; margin-bottom:0.6rem; }}
+    h1 {{ font-size:1.5rem; margin-bottom:1rem; }}
+    .note {{ color:var(--text-sub); font-size:0.85rem; margin-top:1rem; }}
+</style>
+</head>
+<body>
+<header>
+    <span class="logo"><span class="logo-badge">FEMC</span> Family Event &amp; Memory Canvas</span>
+</header>
+<div class="wrap">
+    <div class="card">
+        <span class="badge">{badge}</span>
+        <h1>{title}</h1>
+        {body_rows}
+        {media_html}
+        {content_html}
+        <p class="note">You received this link from a family member via FEMC sharing.</p>
+    </div>
+</div>
+</body>
+</html>"""
+
+
+def _render_share_error_page(heading, detail):
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{heading} — FEMC Share</title>
+<style>
+    :root {{ --bg-dark:#0f172a; --card-bg:#1e293b; --card-border:#334155; --accent:#38bdf8; --text-main:#f8fafc; --text-sub:#94a3b8; --red:#f87171; }}
+    * {{ box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }}
+    body {{ background:var(--bg-dark); color:var(--text-main); min-height:100vh; }}
+    header {{ background:var(--card-bg); border-bottom:1px solid var(--card-border); padding:0.85rem 1.5rem; display:flex; align-items:center; gap:0.5rem; }}
+    .logo {{ font-size:1.1rem; font-weight:700; }}
+    .logo-badge {{ background:var(--accent); color:#000; font-size:0.7rem; padding:0.15rem 0.5rem; border-radius:4px; font-weight:800; }}
+    .wrap {{ max-width:560px; margin:3rem auto; padding:0 1.25rem; }}
+    .card {{ background:var(--card-bg); border:1px solid var(--red); border-radius:12px; padding:1.5rem; }}
+    h1 {{ font-size:1.3rem; color:var(--red); margin-bottom:0.6rem; }}
+    p {{ color:var(--text-sub); }}
+</style>
+</head>
+<body>
+<header>
+    <span class="logo"><span class="logo-badge">FEMC</span> Family Event &amp; Memory Canvas</span>
+</header>
+<div class="wrap">
+    <div class="card">
+        <h1>{heading}</h1>
+        <p>{detail}</p>
+    </div>
+</div>
+</body>
+</html>"""
+
+
 class DemoState:
 
     def seed_demo_transactions(self):
@@ -406,6 +587,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .logo { font-size: 1.25rem; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 0.5rem; }
         .logo-badge { background: var(--accent); color: #000; font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 800; }
 
+        .mode-badge { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; padding: 0.3rem 0.7rem; border-radius: 999px; border: 1px solid var(--card-border); }
+        .mode-badge.mode-real { background: rgba(74, 222, 128, 0.15); color: var(--green); border-color: rgba(74, 222, 128, 0.4); }
+        .mode-badge.mode-practice { background: rgba(251, 191, 36, 0.15); color: var(--amber); border-color: rgba(251, 191, 36, 0.4); }
+        .mode-badge.mode-trial { background: rgba(192, 132, 252, 0.15); color: var(--purple); border-color: rgba(192, 132, 252, 0.4); }
+
         .user-panel { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
         .perspective-box { display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.3); padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--card-border); }
         .perspective-label { font-size: 0.8rem; color: var(--text-sub); font-weight: 600; }
@@ -636,6 +822,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             FEMC <span class="logo-badge">v2.3-C Complete</span>
         </div>
         <div class="user-panel">
+            <span id="mode-badge" class="mode-badge mode-real">REAL MODE</span>
             <button class="btn btn-pink" onclick="openAskMayilPanel()">🤖 Ask Mayil</button>
             <button class="btn btn-outline" onclick="openAnimatedJourneyModal()">🎬 Mayil's Journey</button>
             <div class="perspective-box">
@@ -1042,7 +1229,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                                 <div class="item-row">
                                     <div>
                                         <div class="item-main">${e.title}</div>
-                                        <div class="item-sub">${e.date_or_time || e.date || ''} ${e.description ? `• ${e.description}` : ''}</div>
+                                        <div class="item-sub">${fmtDate(e.date_or_time || e.date)} ${e.description ? `• ${e.description}` : ''}</div>
                                     </div>
                                     <span class="pill pill-${(e.category || 'general').toLowerCase()}">${e.category || 'EVENT'}</span>
                                 </div>
@@ -1117,13 +1304,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         Mayil AI continuously analyzes family events, memories, and reminders to offer context insights and proposal actions. Click <strong>Mayil's Journey</strong> for a guided visual tour of all 10 FEMC product pillars.
                     </div>
                 </div>
+
+                <div class="card" style="margin-top:1.5rem; border: 1px dashed var(--purple);">
+                    <div class="card-header">
+                        <div class="card-title" style="color:var(--purple);">🧪 External Trial Observer</div>
+                        <span id="trial-state-pill" class="pill pill-general">Inactive</span>
+                    </div>
+                    <div style="font-size:0.85rem; color:var(--text-sub); line-height:1.5; margin-bottom:0.75rem;">
+                        Run a guided external trial. While a trial is active, a neutral observer tracks every action you take against real family data, with full content isolation and a sanitized observation log.
+                    </div>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn btn-pink btn-sm" onclick="startTrialFlow()">▶ Start Trial</button>
+                        <button class="btn btn-outline btn-sm" onclick="loadTrialStatus()">📊 Trial Status</button>
+                        <button class="btn btn-outline btn-sm" onclick="exitTrialFlow()">⏹ End Trial</button>
+                    </div>
+                </div>
             `;
+            loadTrialStatus();
         }
 
         async function renderFamily(container) {
             const data = await fetchAPI('/api/family');
             const topology = data.topology || {};
-            const members = topology.members || [];
+            const members = data.members || [];
             const relationships = topology.relationships || [];
 
             container.innerHTML = `
@@ -1142,11 +1345,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         <div class="card">
                             <div class="card-header">
                                 <div class="card-title">${m.name}</div>
-                                ${m.account_id === activeAccountId ? '<span class="pill pill-health">Active User</span>' : '<span class="pill pill-general">Member</span>'}
+                                ${m.is_active ? '<span class="pill pill-health">Active User</span>' : '<span class="pill pill-general">Member</span>'}
                             </div>
                             <div style="font-size:0.85rem; color:var(--text-sub); margin-bottom:0.75rem;">
                                 ✉️ Email: <strong>${m.email || 'None'}</strong><br/>
                                 🎂 Birth Date: <strong>${m.birth_date || 'Not specified'}</strong>
+                            </div>
+                            <div style="display:flex; gap:0.5rem;">
+                                <button class="btn btn-sm btn-outline" onclick="openEditMemberModal('${m.account_id}')">✏️ Edit</button>
                             </div>
                         </div>
                     `).join('')}
@@ -1194,14 +1400,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     </div>
                     <div class="item-list">
                         ${calendar.length > 0 ? calendar.map(c => `
-                            <div class="item-row">
+                            <div class="item-row" style="cursor:pointer;" onclick="openEventDetailModal('${c.event_id}')">
                                 <div>
                                     <div class="item-main">${c.title}</div>
-                                    <div class="item-sub">${c.date} • Visibility: ${c.visibility} ${c.description ? `• ${c.description}` : ''}</div>
+                                    <div class="item-sub">${fmtDate(c.date)} • Visibility: ${c.visibility} ${c.description ? `• ${c.description}` : ''}</div>
                                 </div>
                                 <div style="display:flex; gap:0.5rem; align-items:center;">
                                     <span class="pill pill-${(c.category || 'general').toLowerCase()}">${c.category || 'EVENT'}</span>
-                                    <button class="btn btn-sm btn-outline" onclick="openShareModal('EVENT', '${c.event_id}')">🔗 Share</button>
+                                    <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); openShareModal('EVENT', '${c.event_id}')">🔗 Share</button>
                                 </div>
                             </div>
                         `).join('') : '<div class="item-sub">No calendar events scheduled.</div>'}
@@ -1217,6 +1423,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             const timeline = timelineData.timeline || [];
             const mediaItems = mediaData.items || [];
             const mediaAlbums = mediaData.albums || [];
+            const storyEntries = timeline.filter(t => !t.item_type || String(t.item_type).toLowerCase() === 'memory');
 
             let mediaGalleryHTML = mediaItems.map(m => {
                 let playerHTML = '';
@@ -1276,29 +1483,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <div class="card" style="margin-bottom:1.5rem;">
                     <div class="card-header">
                         <div class="card-title">📖 Memory Story Wall</div>
-                        <span class="pill pill-milestone">${timeline.length} Story Entries</span>
+                        <span class="pill pill-milestone">${storyEntries.length} Story Entries</span>
                     </div>
                     <div class="item-list">
-                        ${timeline.length > 0 ? timeline.map(t => `
+                        ${storyEntries.length > 0 ? storyEntries.map(t => {
+                            const memId = t.ref_id || (t.memory_ids && t.memory_ids[0]) || t.id || '';
+                            const memTitle = t.title || 'Family Memory Story';
+                            const memNarrative = t.narrative || t.narrative_excerpt || t.summary || '';
+                            const memSubject = t.subject_name || t.author_name || 'Family Member';
+                            return `
                             <div class="item-row" style="align-items:flex-start;">
                                 <div style="flex:1;">
                                     <div class="item-main" style="font-size:1rem; color:var(--text-main); margin-bottom:0.25rem;">
-                                        ${t.title || 'Family Memory Story'}
+                                        ${memTitle}
                                     </div>
                                     <div style="font-size:0.88rem; color:var(--text-sub); line-height:1.5; margin-bottom:0.5rem;">
-                                        "${t.narrative || t.description || 'A cherished moment captured in the family memory timeline.'}"
+                                        "${memNarrative || 'A cherished moment captured in the family memory timeline.'}"
                                     </div>
                                     <div class="item-sub">
-                                        Captured by <strong>${t.author_name || 'Family Member'}</strong> • Visibility: <span class="pill pill-general" style="font-size:0.65rem;">FAMILY VISIBLE</span>
+                                        Captured by <strong>${memSubject}</strong> • Visibility: <span class="pill pill-general" style="font-size:0.65rem;">FAMILY VISIBLE</span>
                                     </div>
                                 </div>
                                 <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
-                                    <button class="btn btn-sm btn-outline" onclick="openMediaCaptureCenter('${t.id || ''}')">📸 Add Media</button>
-                                    <button class="btn btn-sm btn-outline" onclick="openShareModal('MEMORY', '${t.id || ''}')">🔗 Share Memory</button>
-                                    <button class="btn btn-sm btn-pink" onclick="openGenerateArtifactModal('card')">✨ Create Celebration</button>
+                                    <button class="btn btn-sm btn-pink" onclick="openMemoryDetailModal('${memId}')">📖 View Story</button>
+                                    <button class="btn btn-sm btn-outline" onclick="openMediaCaptureCenter('${memId}')">📸 Add Media</button>
+                                    <button class="btn btn-sm btn-outline" onclick="openShareModal('MEMORY', '${memId}')">🔗 Share Memory</button>
+                                    <button class="btn btn-sm btn-outline" onclick="openGenerateArtifactModal('memory')">✨ Create Celebration</button>
                                 </div>
-                            </div>
-                        `).join('') : '<div class="item-sub">No memories recorded yet. Click Write Story or Capture Now!</div>'}
+                            </div>`;
+                        }).join('') : '<div class="item-sub">No memories recorded yet. Click Write Story or Capture Now!</div>'}
                     </div>
                 </div>
 
@@ -1350,7 +1563,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                                 <span style="font-size:0.75rem; color:var(--text-sub);">Visibility: <strong>${a.visibility}</strong></span>
                                 <div style="display:flex; gap:0.4rem;">
                                     <button class="btn btn-sm btn-outline" onclick="loadView('memories')">📖 View Source Memory</button>
-                                    <button class="btn btn-sm btn-pink" onclick="openShareModal('MEDIA_ITEM', '${a.id}')">🔗 Share Artifact</button>
+                                    <button class="btn btn-sm btn-pink" onclick="openShareModal('CELEBRATION_ARTIFACT', '${a.id}')">🔗 Share Artifact</button>
                                 </div>
                             </div>
                         </div>
@@ -1473,6 +1686,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     </div>
                 </div>
 
+                <div class="card" style="margin-bottom:1.5rem; border-left:4px solid var(--purple); background:linear-gradient(135deg, rgba(139,92,246,0.12) 0%, transparent 100%);">
+                    <div class="card-header">
+                        <div class="card-title" style="color:var(--purple);">🛡️ What is VEL Guardian?</div>
+                        <span class="pill pill-general">FIRST-TIME GUIDE</span>
+                    </div>
+                    <div style="font-size:0.9rem; color:var(--text-main); line-height:1.7;">
+                        <strong>VEL Guardian</strong> is your family's autonomous integrity watchman. It continuously verifies that every piece of family data
+                        — people, events, memories, media, and derived celebration artifacts — obeys the platform's privacy rules and stays
+                        <em>reference-consistent</em> (every derived cache always points to a real, authorized source record). It never deletes or alters
+                        your canonical data. When it detects an anomaly, it proposes a controlled, human-approved repair rather than acting on its own.
+                        Use the panel below to inspect the latest integrity audit and approve any repair proposals.
+                    </div>
+                </div>
+
                 <div class="card" style="margin-bottom:1.5rem; border-left:4px solid ${isHealthy ? 'var(--green)' : '#f87171'};">
                     <div class="card-header">
                         <div class="card-title">System Health & Data Integrity Audit</div>
@@ -1507,20 +1734,43 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             const data = await fetchAPI('/api/sharing');
             const links = data.share_links || [];
 
+            const [evtData, tlData, mediaData, celData] = await Promise.all([
+                fetchAPI('/api/events'),
+                fetchAPI('/api/timeline'),
+                fetchAPI('/api/media'),
+                fetchAPI('/api/celebrations'),
+            ]);
+            const nameMap = {};
+            (evtData.calendar || []).forEach(c => { nameMap['event|' + c.event_id] = c.title; });
+            (tlData.timeline || []).forEach(t => {
+                const memId = t.ref_id || (t.memory_ids && t.memory_ids[0]) || t.id;
+                if (memId) nameMap['memory|' + memId] = t.title || 'Family Memory Story';
+            });
+            (mediaData.items || []).forEach(m => { nameMap['media_item|' + m.id] = m.caption || 'Media item'; });
+            (celData.artifacts || []).forEach(a => { nameMap['celebration_artifact|' + a.id] = a.title; });
+
+            function resourceLabel(l) {
+                const key = `${l.resource_type}|${l.resource_id}`;
+                const label = nameMap[key];
+                const prettyType = String(l.resource_type).replace(/_/g, ' ');
+                if (label) return `${label} <span style="color:var(--text-sub); font-weight:400;">(${prettyType})</span>`;
+                return `${prettyType} — resource unavailable`;
+            }
+
             container.innerHTML = `
                 <div class="page-header">
                     <div>
-                        <h1 class="section-title">🔗 Secure Sharing Tokens</h1>
-                        <div class="section-subtitle">Tokenized Links, Revocation, and Access Controls</div>
+                        <h1 class="section-title">🔗 Family Sharing</h1>
+                        <div class="section-subtitle">Share exact moments with secure, revocable links</div>
                     </div>
                     <div>
-                        <button class="btn" onclick="openShareModal('EVENT', 'demo_event')">🔗 Create Share Link</button>
+                        <button class="btn" onclick="openCreateShareModal()">🔗 Create Share Link</button>
                     </div>
                 </div>
 
                 <div class="card">
                     <div class="card-header">
-                        <div class="card-title">Active Share Tokens</div>
+                        <div class="card-title">Active Share Links</div>
                         <span class="pill pill-general">${links.length} Links</span>
                     </div>
                     <div class="item-list">
@@ -1530,8 +1780,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                             return `
                                 <div class="item-row">
                                     <div>
-                                        <div class="item-main">Resource: ${l.resource_type} (${l.resource_id})</div>
-                                        <div class="item-sub">Token: <code>${l.token}</code> | Expires: ${l.expires_at || 'Never'}</div>
+                                        <div class="item-main">${resourceLabel(l)}</div>
+                                        <div class="item-sub">Share link expires: ${l.expires_at || 'Never'} · Recipients open the exact ${String(l.resource_type).replace(/_/g, ' ')} detail</div>
                                     </div>
                                     <div style="display:flex; gap:0.5rem; align-items:center;">
                                         ${isRev ? '<span class="pill pill-private">REVOKED</span>' : `
@@ -1541,10 +1791,56 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                                     </div>
                                 </div>
                             `;
-                        }).join('') : '<div class="item-sub">No share links created yet.</div>'}
+                        }).join('') : '<div class="item-sub">No share links created yet. Create one to share an exact event, memory, media item, or celebration.</div>'}
                     </div>
                 </div>
             `;
+        }
+
+        async function openCreateShareModal() {
+            const [evtData, tlData, mediaData, celData] = await Promise.all([
+                fetchAPI('/api/events'),
+                fetchAPI('/api/timeline'),
+                fetchAPI('/api/media'),
+                fetchAPI('/api/celebrations'),
+            ]);
+            let options = [];
+            (evtData.calendar || []).forEach(c => options.push({ type: 'EVENT', id: c.event_id, label: `Event — ${c.title}` }));
+            (tlData.timeline || []).forEach(t => {
+                const memId = t.ref_id || (t.memory_ids && t.memory_ids[0]) || t.id;
+                if (memId) options.push({ type: 'MEMORY', id: memId, label: `Memory — ${t.title || 'Family Memory Story'}` });
+            });
+            (mediaData.items || []).forEach(m => options.push({ type: 'MEDIA_ITEM', id: m.id, label: `Media — ${m.caption || 'Media item'}` }));
+            (celData.artifacts || []).forEach(a => options.push({ type: 'CELEBRATION_ARTIFACT', id: a.id, label: `Celebration — ${a.title}` }));
+
+            const container = document.getElementById('modal-container');
+            container.innerHTML = `
+                <div class="modal-overlay">
+                    <div class="modal-card">
+                        <div class="card-header">
+                            <div class="card-title">🔗 Create Share Link</div>
+                            <button class="btn btn-outline" style="padding:0.2rem 0.5rem;" onclick="closeModal()">✕</button>
+                        </div>
+                        <form onsubmit="submitCreateShare(event, document.getElementById('share-resource').value, document.getElementById('share-resource').dataset.id)">
+                            <div class="form-group">
+                                <label class="form-label">Resource to Share</label>
+                                <select id="share-resource" class="form-select">
+                                    ${options.length ? options.map(o => `<option value="${o.type}" data-id="${o.id}">${o.label}</option>`).join('') : '<option value="">No shareable resources available</option>'}
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Expiration (Minutes)</label>
+                                <input type="number" id="share-expires" class="form-input" value="1440" />
+                            </div>
+                            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
+                                <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+                                <button type="submit" class="btn">Generate Share Link</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            container.style.display = 'block';
         }
 
         async function renderSettings(container) {
@@ -1814,6 +2110,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             container.style.display = 'block';
         }
 
+        function detectQueryLanguage(queryText) {
+            const q = (queryText || '');
+            if (/[\u0B80-\u0BFF]/.test(q)) return 'ta';
+            if (/[\u0900-\u097F]/.test(q)) return 'hi';
+            return 'en';
+        }
+
         function submitMayilQuery(evt) {
             evt.preventDefault();
             const input = document.getElementById('mayil-text-input');
@@ -1823,12 +2126,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             mayilAvatarState = 'thinking';
 
             const resolved = resolveFEMCIntent(text);
-            let respText = "I'm here to help with your family events, memories, and notifications. Try asking 'Show my family' or 'Schedule event'.";
+            const queryLang = detectQueryLanguage(text);
+            const fallbackTexts = {
+                en: "I'm here to help with your family events, memories, and notifications. Try asking 'Show my family' or 'Schedule event'.",
+                ta: "உங்கள் குடும்ப நிகழ்வுகள், நினைவுகள் மற்றும் அறிவிப்புகளுக்கு உதவ நான் இங்கே இருக்கிறேன். 'குடும்பத்தைக் காட்டு' அல்லது 'நிகழ்வு திட்டமிடு' என்று கேளுங்கள்.",
+                hi: "मैं आपके परिवार के कार्यक्रमों, यादों और सूचनाओं में मदद के लिए यहाँ हूँ। 'मेरा परिवार दिखाओ' या 'कार्यक्रम बनाओ' पूछें।"
+            };
+            let respText = fallbackTexts[queryLang] || fallbackTexts['en'];
             let actionFn = null;
             let targetView = null;
 
             if (resolved) {
-                respText = resolved.response[tourLanguage] || resolved.response['en'];
+                respText = resolved.response[queryLang] || resolved.response[tourLanguage] || resolved.response['en'];
                 actionFn = resolved.actionFn || null;
                 targetView = resolved.view || null;
 
@@ -2083,6 +2392,58 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name, email: email, relationship: rel })
+            });
+
+            closeModal();
+            await initMembers();
+            loadView('family');
+        }
+
+        function openEditMemberModal(accountId) {
+            const container = document.getElementById('modal-container');
+            container.innerHTML = `
+                <div class="modal-overlay">
+                    <div class="modal-card">
+                        <div class="card-header">
+                            <div class="card-title">✏️ Edit Family Member</div>
+                            <button class="btn btn-outline" style="padding:0.2rem 0.5rem;" onclick="closeModal()">✕</button>
+                        </div>
+                        <form onsubmit="submitEditMember(event)">
+                            <input type="hidden" id="edit-account-id" value="${accountId}" />
+                            <div class="form-group">
+                                <label class="form-label">Full Name</label>
+                                <input type="text" id="edit-name" class="form-input" placeholder="e.g. Alice Smith" required />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Email Address</label>
+                                <input type="email" id="edit-email" class="form-input" placeholder="e.g. alice@smithfamily.org" required />
+                            </div>
+                            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
+                                <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+                                <button type="submit" class="btn">Save Changes</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            const data = membersData.find(m => String(m.account_id) === String(accountId));
+            if (data) {
+                document.getElementById('edit-name').value = data.name || '';
+                document.getElementById('edit-email').value = data.email || '';
+            }
+            container.style.display = 'block';
+        }
+
+        async function submitEditMember(evt) {
+            evt.preventDefault();
+            const accountId = document.getElementById('edit-account-id').value;
+            const name = document.getElementById('edit-name').value;
+            const email = document.getElementById('edit-email').value;
+
+            await fetchAPI('/api/family/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_id: accountId, name: name, email: email })
             });
 
             closeModal();
@@ -2577,7 +2938,161 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             alert("🔗 Secure Share Link copied to clipboard!");
         }
 
-        function openGenerateArtifactModal() {
+        function generate_media_download_filename(caption, mediaType) {
+            const clean = String(caption || 'Family_Moment').replace(/[^a-zA-Z0-9\-_]/g, '_').slice(0, 30).replace(/^_+|_+$/g, '');
+            const extMap = { video: '.mp4', audio: '.mp3', photo: '.jpg' };
+            const ext = extMap[String(mediaType || 'photo').toLowerCase()] || '.jpg';
+            const today = new Date().toISOString().slice(0, 10);
+            return `${clean || 'Family_Moment'}_${today}${ext}`;
+        }
+
+        function fmtDate(value, withTime) {
+            if (!value) return '';
+            const d = new Date(value);
+            if (isNaN(d.getTime())) return String(value);
+            const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            if (withTime) {
+                const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                return `${dateStr} · ${timeStr}`;
+            }
+            return dateStr;
+        }
+
+        async function openMemoryDetailModal(memId) {
+            const timelineData = await fetchAPI('/api/timeline');
+            const mediaData = await fetchAPI('/api/media');
+            const timeline = timelineData.timeline || [];
+            const em = timelineData.event_memories || {};
+            const mediaItems = mediaData.items || [];
+
+            let memory = timeline.find(t => (t.ref_id === memId) || (t.memory_ids && t.memory_ids.indexOf(memId) >= 0));
+            let narrative = '';
+            let subject = 'Family Member';
+            let title = 'Family Memory Story';
+            let dateStr = '';
+            if (!memory) {
+                const richMem = (em.memories || []).find(m => m.id === memId);
+                if (richMem) {
+                    title = 'Shared Memory';
+                    narrative = richMem.narrative || '';
+                    subject = richMem.subject_name || 'Family Member';
+                    dateStr = richMem.recorded_at ? new Date(richMem.recorded_at).toLocaleDateString() : '';
+                }
+            } else {
+                narrative = memory.narrative || memory.narrative_excerpt || memory.summary || '';
+                subject = memory.subject_name || memory.author_name || 'Family Member';
+                title = memory.title || 'Family Memory Story';
+                dateStr = memory.date ? new Date(memory.date).toLocaleDateString() : (memory.timestamp || '');
+            }
+
+            const linkedMedia = mediaItems.filter(m => m.memory_id === memId);
+            const mediaHTML = linkedMedia.length
+                ? `<div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-top:1rem;">${linkedMedia.map(m => `
+                    <div style="width:150px;">
+                        ${String(m.media_type).toLowerCase() === 'video'
+                            ? `<video controls src="${m.uri}" style="width:100%; height:100px; object-fit:cover; border-radius:8px; border:1px solid var(--card-border);"></video>`
+                            : `<img src="${m.uri}" alt="${m.caption || 'Photo'}" style="width:100%; height:100px; object-fit:cover; border-radius:8px; border:1px solid var(--card-border);" />`}
+                        <div style="font-size:0.75rem; color:var(--text-sub); margin-top:0.3rem;">${m.caption || ''}</div>
+                    </div>`).join('')}</div>`
+                : '<div class="item-sub" style="margin-top:1rem;">No media attached to this memory yet.</div>';
+
+            const container = document.getElementById('modal-container');
+            container.innerHTML = `
+                <div class="modal-overlay">
+                    <div class="modal-card">
+                        <div class="card-header">
+                            <div class="card-title">📖 ${title}</div>
+                            <button class="btn btn-outline" style="padding:0.2rem 0.5rem;" onclick="closeModal()">✕</button>
+                        </div>
+                        <div style="font-size:0.85rem; color:var(--text-sub); margin-bottom:0.75rem;">
+                            About: <strong>${subject}</strong>${dateStr ? ' · ' + dateStr : ''}
+                        </div>
+                        <div style="font-size:0.95rem; line-height:1.6; color:var(--text-main);">
+                            "${narrative || 'A cherished moment captured in the family memory timeline.'}"
+                        </div>
+                        <div style="font-size:0.8rem; font-weight:700; color:var(--pink); margin-top:1.1rem;">📎 Related Media</div>
+                        ${mediaHTML}
+                        <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
+                            <button class="btn btn-outline btn-sm" onclick="closeModal(); openShareModal('MEMORY', '${memId}')">🔗 Share Memory</button>
+                            <button class="btn btn-pink btn-sm" onclick="closeModal(); openGenerateArtifactModal('memory')">✨ Create Celebration</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.style.display = 'block';
+        }
+
+        async function openEventDetailModal(eventId) {
+            const data = await fetchAPI(`/api/events?event_id=${encodeURIComponent(eventId)}`);
+            const det = data.event_detail || {};
+            const ev = det.event || {};
+            const place = det.place || null;
+            const memories = det.memories || [];
+            const media = det.media_items || [];
+            const targetPersons = det.target_persons || [];
+
+            const mediaHTML = media.length
+                ? `<div style="display:flex; flex-wrap:wrap; gap:0.6rem; margin-top:0.8rem;">${media.map(m => {
+                    const isVid = String(m.media_type || '').toLowerCase() === 'video';
+                    return `<div style="width:120px;">
+                        ${isVid ? `<video controls src="${m.uri}" style="width:100%; height:90px; object-fit:cover; border-radius:6px;"></video>` : `<img src="${m.uri}" alt="" style="width:100%; height:90px; object-fit:cover; border-radius:6px; border:1px solid var(--card-border);" />`}
+                        <div style="font-size:0.7rem; color:var(--text-sub); margin-top:0.25rem;">${m.caption || ''}</div>
+                    </div>`;
+                }).join('')}</div>`
+                : '<div class="item-sub" style="margin-top:0.8rem;">No media attached to this event yet.</div>';
+
+            const container = document.getElementById('modal-container');
+            container.innerHTML = `
+                <div class="modal-overlay">
+                    <div class="modal-card">
+                        <div class="card-header">
+                            <div class="card-title">📅 ${ev.title || 'Event Detail'}</div>
+                            <button class="btn btn-outline" style="padding:0.2rem 0.5rem;" onclick="closeModal()">✕</button>
+                        </div>
+                        <div style="font-size:0.88rem; line-height:1.6;">
+                            <div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                                <div style="min-width:110px; color:var(--text-sub); font-weight:600;">When</div>
+                                <div>${fmtDate(ev.start_time, true)}${ev.end_time ? ' — ' + fmtDate(ev.end_time, true) : ''}</div>
+                            </div>
+                            <div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                                <div style="min-width:110px; color:var(--text-sub); font-weight:600;">Description</div>
+                                <div>${ev.description || '—'}</div>
+                            </div>
+                            <div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                                <div style="min-width:110px; color:var(--text-sub); font-weight:600;">Category</div>
+                                <div>${String(ev.category || 'general').toUpperCase()}</div>
+                            </div>
+                            <div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                                <div style="min-width:110px; color:var(--text-sub); font-weight:600;">Visibility</div>
+                                <div>${String(ev.visibility || 'family').toUpperCase()}</div>
+                            </div>
+                            ${place ? `<div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                                <div style="min-width:110px; color:var(--text-sub); font-weight:600;">Place</div>
+                                <div>${place.name || ''}${place.address ? ', ' + place.address : ''}</div>
+                            </div>` : ''}
+                            ${targetPersons.length ? `<div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                                <div style="min-width:110px; color:var(--text-sub); font-weight:600;">People</div>
+                                <div>${targetPersons.map(p => p.name || p.person_name).join(', ')}</div>
+                            </div>` : ''}
+                            <div style="display:flex; gap:10px; padding:6px 0;">
+                                <div style="min-width:110px; color:var(--text-sub); font-weight:600;">Memories</div>
+                                <div>${memories.length ? memories.map(m => `“${(m.narrative || '').slice(0, 90)}${(m.narrative || '').length > 90 ? '…' : ''}”`).join('<br/>') : 'None yet'}</div>
+                            </div>
+                        </div>
+                        <div style="font-size:0.8rem; font-weight:700; color:var(--pink); margin-top:1rem;">📎 Related Media</div>
+                        ${mediaHTML}
+                        <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
+                            <button class="btn btn-outline btn-sm" onclick="closeModal(); openShareModal('EVENT', '${ev.id || eventId}')">🔗 Share Event</button>
+                            <button class="btn btn-pink btn-sm" onclick="closeModal(); openGenerateArtifactModal('event')">✨ Create Celebration</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.style.display = 'block';
+        }
+
+        function openGenerateArtifactModal(initialType) {
+            const type = initialType || 'event';
             const container = document.getElementById('modal-container');
             container.innerHTML = `
                 <div class="modal-overlay">
@@ -2589,10 +3104,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         <form onsubmit="submitGenerateArtifact(event)">
                             <div class="form-group">
                                 <label class="form-label">Artifact Target Type</label>
-                                <select id="art-target-type" class="form-select">
-                                    <option value="event" selected>Event Celebration Card</option>
-                                    <option value="person">Person Highlight Digest</option>
+                                <select id="art-target-type" class="form-select" onchange="refreshArtifactTargets()">
+                                    <option value="event" ${type === 'event' ? 'selected' : ''}>Event Celebration Card</option>
+                                    <option value="memory" ${type === 'memory' ? 'selected' : ''}>Memory Celebration Card</option>
+                                    <option value="person" ${type === 'person' ? 'selected' : ''}>Person Highlight Digest</option>
+                                    <option value="album" ${type === 'album' ? 'selected' : ''}>Celebration Album</option>
                                 </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Target Resource</label>
+                                <select id="art-target-id" class="form-select"><option value="">Loading…</option></select>
                             </div>
                             <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
                                 <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
@@ -2603,15 +3124,38 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 </div>
             `;
             container.style.display = 'block';
+            refreshArtifactTargets();
+        }
+
+        async function refreshArtifactTargets() {
+            const type = document.getElementById('art-target-type').value;
+            const sel = document.getElementById('art-target-id');
+            if (!sel) return;
+            sel.innerHTML = '<option value="">Loading…</option>';
+            let options = [];
+            if (type === 'event') {
+                const d = await fetchAPI('/api/events');
+                options = (d.calendar || []).map(c => ({ id: c.event_id, label: c.title }));
+            } else if (type === 'memory') {
+                const d = await fetchAPI('/api/timeline');
+                const em = d.event_memories || {};
+                options = (em.memories || []).map(m => ({ id: m.id, label: (m.narrative || 'Memory').slice(0, 60) }));
+            } else if (type === 'person') {
+                const d = await fetchAPI('/api/family');
+                options = (d.members || []).map(m => ({ id: m.person_id, label: m.name }));
+            } else if (type === 'album') {
+                const d = await fetchAPI('/api/media');
+                options = (d.albums || []).map(a => ({ id: a.id, label: a.title }));
+            }
+            sel.innerHTML = options.length
+                ? options.map(o => `<option value="${o.id}">${o.label}</option>`).join('')
+                : '<option value="">No targets available</option>';
         }
 
         async function submitGenerateArtifact(evt) {
             evt.preventDefault();
             const targetType = document.getElementById('art-target-type').value;
-
-            const eventsData = await fetchAPI('/api/events');
-            const cal = eventsData.calendar || [];
-            const targetId = cal.length > 0 ? cal[0].event_id : '';
+            const targetId = document.getElementById('art-target-id').value;
 
             if (targetId) {
                 await fetchAPI('/api/celebrations/generate', {
@@ -2710,6 +3254,74 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ proposal_id: propId })
+            });
+        }
+
+        async function refreshModeBadge() {
+            const badge = document.getElementById('mode-badge');
+            if (!badge) return;
+            try {
+                const statusData = await fetchAPI('/api/guide/status');
+                const st = statusData.session_state;
+                const practiceData = await fetchAPI('/api/guide/practice/status');
+                const inPractice = !!(practiceData.practice_world && practiceData.is_practice_active);
+                const mode = st && st.current_mode ? st.current_mode : 'real';
+                if (inPractice || mode === 'learn_by_doing') {
+                    badge.textContent = 'PRACTICE MODE';
+                    badge.className = 'mode-badge mode-practice';
+                } else if (mode === 'real') {
+                    badge.textContent = 'REAL MODE';
+                    badge.className = 'mode-badge mode-real';
+                } else {
+                    badge.textContent = String(mode).toUpperCase() + ' MODE';
+                    badge.className = 'mode-badge mode-real';
+                }
+            } catch (e) {
+                badge.textContent = 'REAL MODE';
+                badge.className = 'mode-badge mode-real';
+            }
+        }
+
+        async function startTrialFlow() {
+            await fetchAPI('/api/trial/start', { method: 'POST' });
+            refreshModeBadge();
+            await loadTrialStatus();
+            loadView(currentView);
+        }
+
+        async function exitTrialFlow() {
+            await fetchAPI('/api/trial/exit', { method: 'POST' });
+            refreshModeBadge();
+            await loadTrialStatus();
+            loadView(currentView);
+        }
+
+        async function loadTrialStatus() {
+            const pill = document.getElementById('trial-state-pill');
+            if (!pill) return;
+            try {
+                const data = await fetchAPI('/api/trial/status');
+                const active = !!(data.is_trial_active === true || (data.trial && data.trial.is_active));
+                const obsCount = (data.observed_action_count != null) ? data.observed_action_count : (data.observations ? data.observations.length : 0);
+                pill.textContent = active ? `ACTIVE · ${obsCount} observations` : 'Inactive';
+                pill.className = active ? 'pill pill-anniversary' : 'pill pill-general';
+            } catch (e) {
+                pill.textContent = 'Inactive';
+            }
+        }
+
+        window.addEventListener('error', function (e) {
+            console.error('[FEMC] Runtime error:', e.message);
+        });
+
+        (async function boot() {
+            await initMembers();
+            await refreshModeBadge();
+            await loadView('home');
+        })();
+    </script>
+</body>
+</html>
 """
 
 
@@ -2720,6 +3332,14 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
 
         if path == "/" or path == "/share":
+            if path == "/share" and query.get("token"):
+                api = demo_state.api
+                page = _render_share_page(api, query["token"][0])
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(page.encode("utf-8"))
+                return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -2757,9 +3377,35 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             active_account = api.canonical.get_account(demo_state.active_account_id)
             active_person_id = active_account.person_id if active_account else demo_state.p_alice.id
             active_detail = api.build_rich_person_detail_for_session(session_id, active_person_id)
-            self._send_json({"topology": to_dict(topology), "active_person_detail": to_dict(active_detail)})
+            members_list = []
+            for acc_id, sess_id in demo_state.account_sessions.items():
+                acc = api.canonical.get_account(acc_id)
+                if not acc:
+                    continue
+                per = api.canonical.get_person(acc.person_id) if acc.person_id else None
+                members_list.append({
+                    "account_id": acc.id,
+                    "person_id": acc.person_id,
+                    "name": per.name if per else acc.username,
+                    "email": acc.email,
+                    "username": acc.username,
+                    "session_id": sess_id,
+                    "is_active": acc_id == demo_state.active_account_id,
+                    "birth_date": per.birth_date.isoformat() if per and per.birth_date else None,
+                })
+            topology_dict = to_dict(topology)
+            for rel in topology_dict.get("relationships", []):
+                rel["source_person_name"] = api.canonical.get_person(rel.get("source_person_id", "")).name if api.canonical.get_person(rel.get("source_person_id", "")) else "Unknown"
+                rel["target_person_name"] = api.canonical.get_person(rel.get("target_person_id", "")).name if api.canonical.get_person(rel.get("target_person_id", "")) else "Unknown"
+            self._send_json({
+                "topology": topology_dict,
+                "active_person_detail": to_dict(active_detail),
+                "members": members_list,
+            })
         elif path == "/api/events":
-            calendar_entries, det = api.get_events_projection(session_id, fc_id, default_event_id=demo_state.event1.id)
+            requested = query.get("event_id", [None])[0]
+            default_id = requested or demo_state.event1.id
+            calendar_entries, det = api.get_events_projection(session_id, fc_id, default_event_id=default_id)
             self._send_json({"calendar": to_dict(calendar_entries), "event_detail": to_dict(det)})
         elif path == "/api/timeline":
             timeline_entries, event_memories = api.get_timeline_projection(session_id, fc_id, default_event_id=demo_state.event1.id)
@@ -2798,17 +3444,22 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/guide/practice/status":
             session = demo_state.api._validate_session(demo_state.session_id)
             pw = demo_state.api.get_practice_world_state_for_session(session.session_id)
-            if not pw:
-                pw = demo_state.api.start_practice_world_for_session(session.session_id, demo_state.family_context.id)
-            self._send_json({"practice_world": to_dict(pw)})
+            self._send_json({
+                "practice_world": to_dict(pw) if pw else None,
+                "is_practice_active": bool(pw and getattr(pw, "is_active", False)),
+                "message": None if pw else "No practice session is active. Start one via POST /api/guide/practice/start.",
+            })
             return
         elif path == "/api/guide/status":
             session = demo_state.api._validate_session(demo_state.session_id)
             st = demo_state.api.get_guided_experience_state_for_session(session.session_id)
-            if not st:
-                st = demo_state.api.initialize_guided_experience_for_session(session.session_id, demo_state.family_context.id)
             scenes = demo_state.api.get_shared_journey_scenes_for_session(session.session_id)
-            self._send_json({"session_state": to_dict(st), "scenes": to_dict(scenes)})
+            self._send_json({"session_state": to_dict(st) if st else None, "scenes": to_dict(scenes)})
+            return
+        elif path == "/api/trial/status":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            res = api.get_trial_status_for_session(session.session_id)
+            self._send_json(to_dict(res))
             return
         elif path == "/api/export":
             export_data, validation = api.get_export_projection(session_id, fc_id)
@@ -2862,7 +3513,7 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
 
         if path == "/api/guide/practice/start":
             session = demo_state.api._validate_session(demo_state.session_id)
-            from ENGINEERING.source.femc.models import ContextType, AgeGroup, Language
+            from ENGINEERING.source.femc.models import ContextType, AgeGroup, Language, GuideMode
             ctx_str = payload.get("context_type", "family").lower()
             age_str = payload.get("age_group", "mixed").lower()
             lang_str = payload.get("language", "en").lower()
@@ -2877,10 +3528,18 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             try: lang = Language(lang_str)
             except Exception: lang = Language.ENGLISH
 
+            st = demo_state.api.get_guided_experience_state_for_session(session.session_id)
+            if st is None:
+                demo_state.api.initialize_guided_experience_for_session(
+                    session.session_id, demo_state.family_context.id, mode=GuideMode.LEARN_BY_DOING
+                )
+            else:
+                st.current_mode = GuideMode.LEARN_BY_DOING
+
             pw = demo_state.api.start_practice_world_for_session(
                 session.session_id, demo_state.family_context.id, ctx, age, inc_fam, lang
             )
-            self._send_json({"status": "success", "practice_world": to_dict(pw)})
+            self._send_json({"status": "success", "mode": "learn_by_doing", "practice_world": to_dict(pw)})
             return
         elif path == "/api/guide/practice/action":
             session = demo_state.api._validate_session(demo_state.session_id)
@@ -2913,14 +3572,14 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/guide/init":
             session = demo_state.api._validate_session(demo_state.session_id)
             from ENGINEERING.source.femc.models import GuideMode, ContextType, AgeGroup, Language
-            mode_str = payload.get("mode", "learn_by_doing").lower()
+            mode_str = payload.get("mode", "real").lower()
             ctx_str = payload.get("context_type", "family").lower()
             age_str = payload.get("age_group", "mixed").lower()
             lang_str = payload.get("language", "en").lower()
             inc_fam = payload.get("include_family", True)
 
             try: mode = GuideMode(mode_str)
-            except Exception: mode = GuideMode.LEARN_BY_DOING
+            except Exception: mode = GuideMode.REAL
 
             try: ctx = ContextType(ctx_str)
             except Exception: ctx = ContextType.FAMILY
@@ -2956,9 +3615,9 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/guide/switch_mode":
             session = demo_state.api._validate_session(demo_state.session_id)
             from ENGINEERING.source.femc.models import GuideMode
-            mode_str = payload.get("mode", "learn_by_doing").lower()
+            mode_str = payload.get("mode", "real").lower()
             try: mode = GuideMode(mode_str)
-            except Exception: mode = GuideMode.LEARN_BY_DOING
+            except Exception: mode = GuideMode.REAL
 
             st = demo_state.api.switch_guided_experience_mode_for_session(session.session_id, mode)
             self._send_json({"status": "success", "session_state": to_dict(st)})
@@ -2976,9 +3635,15 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"status": "error", "message": "Missing account_id"})
         elif path == "/api/family/onboard":
-            name = payload.get("name", "New Member")
-            email = payload.get("email", "member@example.com")
+            name = payload.get("name", "")
+            email = payload.get("email", "")
             rel = payload.get("relationship", "MEMBER")
+            if not name or not name.strip():
+                self._send_json({"status": "error", "message": "Member name is required."}, status=400)
+                return
+            if not email or not email.strip():
+                self._send_json({"status": "error", "message": "Member email is required."}, status=400)
+                return
             if is_lbd:
                 res = api.execute_simulated_action_for_session(
                     session_id, ActionType.CREATE, "btn-onboard", ResourceType.PERSON,
@@ -2998,12 +3663,59 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                     "person_id": per.id,
                     "session_id": sess.session_id,
                 })
+        elif path == "/api/family/update":
+            acc_id = payload.get("account_id", "")
+            new_name = payload.get("name", "")
+            new_email = payload.get("email", "")
+            if not acc_id:
+                self._send_json({"status": "error", "message": "account_id is required."}, status=400)
+                return
+            try:
+                result = api.update_member_for_session(
+                    session_id, acc_id, name=new_name, email=new_email
+                )
+                self._send_json({"status": "success", "member": result})
+            except PermissionError as e:
+                self._send_json({"status": "error", "message": str(e)}, status=403)
+            except ValueError as e:
+                self._send_json({"status": "error", "message": str(e)}, status=400)
+        elif path == "/api/trial/start":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            res = api.start_trial_for_session(session.session_id, fc_id)
+            self._send_json(to_dict(res))
+            return
+        elif path == "/api/trial/status":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            res = api.get_trial_status_for_session(session.session_id)
+            self._send_json(to_dict(res))
+            return
+        elif path == "/api/trial/observe":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            act_str = payload.get("action_type", "PERSPECTIVE_SWITCH").upper()
+            res_type_str = payload.get("resource_type", "EVENT").upper()
+            outcome = payload.get("outcome", "observed")
+            isolated = bool(payload.get("isolated", True))
+            res = api.record_trial_observation_for_session(
+                session.session_id, act_str, res_type_str, outcome, isolated,
+                details=payload.get("details") or {},
+            )
+            self._send_json(to_dict(res))
+            return
+        elif path == "/api/trial/exit":
+            session = demo_state.api._validate_session(demo_state.session_id)
+            res = api.end_trial_for_session(session.session_id)
+            self._send_json(to_dict(res))
+            return
         elif path == "/api/events/create":
-            title = payload.get("title", "New Event")
+            title = payload.get("title", "")
             desc = payload.get("description", "")
             cat_str = payload.get("category", "GENERAL").upper()
             vis_str = payload.get("visibility", "FAMILY").upper()
             target_ids = payload.get("target_person_ids", [])
+
+            if not title or not title.strip():
+                self._send_json({"status": "error", "message": "Event title is required."}, status=400)
+                return
 
             try:
                 cat = EventCategory(cat_str.lower())
@@ -3036,9 +3748,14 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json({"status": "success", "event": to_dict(event)})
         elif path == "/api/memories/create":
-            narrative = payload.get("narrative", "Shared memory")
+            narrative = payload.get("narrative", "")
             evt_id = payload.get("event_id", demo_state.event1.id)
             vis_str = payload.get("visibility", "FAMILY").upper()
+
+            if not narrative or not narrative.strip():
+                self._send_json({"status": "error", "message": "Memory narrative is required."}, status=400)
+                return
+
             try:
                 vis = VisibilityLevel(vis_str.lower())
             except ValueError:
@@ -3059,12 +3776,19 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json({"status": "success", "memory": to_dict(memory)})
         elif path == "/api/media/create":
-            uri = payload.get("uri", "https://images.unsplash.com/photo-1513151233558-d860c5398176")
-            caption = payload.get("caption", "Family media")
+            uri = payload.get("uri", "")
+            caption = payload.get("caption", "")
             media_type_str = payload.get("media_type", "photo").lower()
             mem_id = payload.get("memory_id")
             evt_id = payload.get("event_id")
             vis_str = payload.get("visibility", "FAMILY").upper()
+
+            if not uri or not uri.strip():
+                self._send_json({"status": "error", "message": "Media URI is required."}, status=400)
+                return
+            if not caption or not caption.strip():
+                self._send_json({"status": "error", "message": "Media caption is required."}, status=400)
+                return
 
             try:
                 m_type = MediaType(media_type_str)
@@ -3118,22 +3842,30 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json({"status": "success", "artifact": to_dict(res.get("artifact"))})
             else:
-                if target_type == "event":
-                    artifact = api.build_celebration_artifact_for_event_for_session(session_id, target_id)
-                elif target_type == "person":
-                    artifact = api.build_celebration_artifact_for_person_for_session(session_id, demo_state.p_alice.id, fc_id)
-                elif target_type == "memory":
-                    artifact = api.build_celebration_artifact_for_memory_for_session(session_id, demo_state.memory1.id)
-                elif target_type == "album":
-                    artifact = api.build_celebration_album_artifact_for_session(session_id, demo_state.album1.id)
-                else:
-                    artifact = api.build_celebration_artifact_for_event_for_session(session_id, demo_state.event1.id)
+                try:
+                    if target_type == "event":
+                        artifact = api.build_celebration_artifact_for_event_for_session(session_id, target_id)
+                    elif target_type == "person":
+                        artifact = api.build_celebration_artifact_for_person_for_session(session_id, target_id, fc_id)
+                    elif target_type == "memory":
+                        artifact = api.build_celebration_artifact_for_memory_for_session(session_id, target_id)
+                    elif target_type == "album":
+                        artifact = api.build_celebration_album_artifact_for_session(session_id, target_id)
+                    else:
+                        artifact = api.build_celebration_artifact_for_event_for_session(session_id, demo_state.event1.id)
+                except (ValueError, PermissionError) as e:
+                    self._send_json({"status": "error", "message": str(e)}, status=400)
+                    return
 
                 self._send_json({"status": "success", "artifact": to_dict(artifact)})
         elif path == "/api/sharing/create":
             res_type_str = payload.get("resource_type", "EVENT").upper()
-            res_id = payload.get("resource_id", demo_state.event1.id)
+            res_id = payload.get("resource_id", "")
             expires = payload.get("expires_in_minutes", 1440)
+
+            if not res_id:
+                self._send_json({"status": "error", "message": "resource_id is required."}, status=400)
+                return
 
             try:
                 res_type = ShareResourceType(res_type_str.lower())
@@ -3147,13 +3879,17 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json({"status": "success", "share_link": to_dict(res.get("share_link"))})
             else:
-                link = api.create_share_link_for_session(
-                    session_id=session_id,
-                    resource_type=res_type,
-                    resource_id=res_id,
-                    family_context_id=fc_id,
-                    expires_in_minutes=expires,
-                )
+                try:
+                    link = api.create_share_link_for_session(
+                        session_id=session_id,
+                        resource_type=res_type,
+                        resource_id=res_id,
+                        family_context_id=fc_id,
+                        expires_in_minutes=expires,
+                    )
+                except (ValueError, PermissionError) as e:
+                    self._send_json({"status": "error", "message": str(e)}, status=400)
+                    return
                 self._send_json({"status": "success", "share_link": to_dict(link)})
         elif path == "/api/sharing/revoke":
             token = payload.get("token")
@@ -3193,9 +3929,9 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, "Not Found")
 
-    def _send_json(self, data):
+    def _send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

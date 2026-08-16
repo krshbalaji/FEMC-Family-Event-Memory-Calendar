@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import enum
 from typing import List, Optional, Dict
 
 from .models import (
@@ -83,8 +84,25 @@ from .services import (
     SearchService,
     SharingService,
     TimelineService,
+    TrialObserverService,
     VelGuardianService,
 )
+
+
+def _serialize(obj):
+    if hasattr(obj, "__dataclass_fields__"):
+        return {k: _serialize(getattr(obj, k)) for k in obj.__dataclass_fields__}
+    if isinstance(obj, list):
+        return [_serialize(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _serialize(v) for k, v in obj.items()}
+    if isinstance(obj, enum.Enum):
+        return obj.value
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    if isinstance(obj, (int, float, str, bool)) or obj is None:
+        return obj
+    return str(obj)
 
 
 class FEMCApi:
@@ -101,7 +119,7 @@ class FEMCApi:
         self.timeline = TimelineService(self.canonical, self.derived, self.authorization)
         self.notification = NotificationService(self.canonical, self.authorization)
         self.reminder = ReminderService(self.canonical, self.authorization, self.notification)
-        self.sharing = SharingService(self.canonical, self.authorization)
+        self.sharing = SharingService(self.canonical, self.derived, self.authorization)
         self.dashboard = DashboardService(
             self.canonical,
             self.derived,
@@ -130,6 +148,7 @@ class FEMCApi:
         self.transaction_memory = TransactionMemoryService(self.transaction_repository, self.canonical, self.authorization)
         self.data_portability.transaction_service = self.transaction_memory
         self.guided_experience = MayilGuidedExperienceService(self.canonical, self.derived, self.authorization, self.transaction_memory)
+        self.trial_observer = TrialObserverService(self.canonical)
 
 
 
@@ -356,6 +375,37 @@ class FEMCApi:
     def get_family_topology_for_session(self, session_id: str, family_context_id: str) -> FamilyTopologyResult:
         session = self._validate_session(session_id)
         return self.identity.get_family_topology_for_account(family_context_id, session.account_id)
+
+    def update_member_for_session(
+        self,
+        session_id: str,
+        account_id: str,
+        name: Optional[str] = None,
+        email: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        session = self._validate_session(session_id)
+        fc = self.identity.resolve_family_context(session.account_id)
+        if fc is None or account_id not in fc.member_ids:
+            raise PermissionError("Account is not authorized to edit this member")
+        account = self.canonical.get_account(account_id)
+        if account is None:
+            raise ValueError("Member account does not exist")
+        if email is not None and email.strip():
+            account.email = email.strip()
+        person = None
+        if name is not None and name.strip() and account.person_id:
+            person = self.canonical.get_person(account.person_id)
+            if person:
+                person.name = name.strip()
+        if person is None and account.person_id:
+            person = self.canonical.get_person(account.person_id)
+        return {
+            "status": "success",
+            "account_id": account.id,
+            "person_id": account.person_id,
+            "name": person.name if person else "",
+            "email": account.email,
+        }
 
     def create_place_for_session(
         self,
@@ -733,7 +783,7 @@ class FEMCApi:
         self,
         session_id: str,
         family_context_id: str,
-        mode: GuideMode = GuideMode.LEARN_BY_DOING,
+        mode: GuideMode = GuideMode.REAL,
         context_type: ContextType = ContextType.FAMILY,
         age_group: AgeGroup = AgeGroup.MIXED,
         include_family: bool = True,
@@ -787,6 +837,50 @@ class FEMCApi:
     def reset_guided_experience_for_session(self, session_id: str) -> GuideSessionState:
         session = self._validate_session(session_id)
         return self.guided_experience.reset_guided_session(session.account_id)
+
+    def start_trial_for_session(self, session_id: str, family_context_id: str) -> Dict[str, Any]:
+        session = self._validate_session(session_id)
+        trial = self.trial_observer.start_trial(session.account_id, family_context_id)
+        st = self.guided_experience.get_session(session.account_id)
+        if st is None:
+            st = self.initialize_guided_experience_for_session(session_id, family_context_id, mode=GuideMode.LEARN_BY_DOING)
+        else:
+            st.current_mode = GuideMode.LEARN_BY_DOING
+            st.updated_at = datetime.datetime.utcnow()
+        self.start_practice_world_for_session(session_id, family_context_id)
+        return {
+            "status": "trial_started",
+            "trial_id": trial.trial_id,
+            "mode": "learn_by_doing",
+            "practice_world_started": True,
+        }
+
+    def get_trial_status_for_session(self, session_id: str) -> Dict[str, Any]:
+        session = self._validate_session(session_id)
+        return self.trial_observer.get_trial_status(session.account_id)
+
+    def record_trial_observation_for_session(
+        self,
+        session_id: str,
+        action_type: str,
+        resource_type: str,
+        outcome: str = "observed",
+        isolated: bool = True,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        session = self._validate_session(session_id)
+        observation = self.trial_observer.record_observation(
+            session.account_id, action_type, resource_type, outcome, isolated, details
+        )
+        if observation is None:
+            return {"recorded": False, "reason": "No active trial"}
+        return {"recorded": True, "observation_id": observation.observation_id}
+
+    def end_trial_for_session(self, session_id: str) -> Dict[str, Any]:
+        session = self._validate_session(session_id)
+        result = self.trial_observer.end_trial(session.account_id)
+        self.exit_practice_world_for_session(session_id)
+        return result
 
     def start_practice_world_for_session(
         self,
@@ -843,8 +937,8 @@ class FEMCApi:
         pw = None
         if is_lbd:
             pw = self.guided_experience.practice_worlds.get(session.account_id)
-            if not pw and fc_id:
-                pw = self.guided_experience.get_or_create_practice_world(session.account_id, fc_id)
+            if pw is not None and not pw.is_active:
+                pw = None
         return session, fc_id, pw
 
     def get_members_projection(self, session_id: str, account_sessions: Dict[str, str], active_account_id: str):
@@ -910,7 +1004,7 @@ class FEMCApi:
         if pw is not None:
             return self.guided_experience.get_practice_celebrations_projection(pw)
         else:
-            return self.celebration_studio.list_celebration_artifacts(session.account_id, fc_id)
+            return self.list_celebration_artifacts_for_session(session_id, fc_id)
 
     def get_sharing_projection(self, session_id: str, family_context_id: str):
         session, fc_id, pw = self._resolve_view_context(session_id, family_context_id)
@@ -927,7 +1021,7 @@ class FEMCApi:
             return export_data, validation
         else:
             export_data = self.data_portability.export_family_context_for_account(session.account_id, fc_id)
-            serialization = self.data_portability.serialize_family_context(export_data)
+            serialization = _serialize(export_data)
             validation = self.data_portability.validate_data_export(serialization)
             return serialization, validation
 

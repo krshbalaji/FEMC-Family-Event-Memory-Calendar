@@ -178,10 +178,14 @@ def test_10_reset_only_affects_practice_state():
 
 def test_11_exit_preserves_real_state():
     state = DemoState()
+    events_before = len(state.api.canonical.list_events())
     state.api.start_practice_world_for_session(state.session_alice.session_id, state.family_context.id)
     res = state.api.exit_practice_world_for_session(state.session_alice.session_id)
     assert res["status"] == "exited"
-    assert "Your real FEMC data was not changed." in res["message"]
+    assert res["real_views_restored"] is True
+    # Practice world is fully cleared and real data is untouched
+    assert state.api.guided_experience.practice_worlds.get(state.acc_alice.id) is None
+    assert len(state.api.canonical.list_events()) == events_before
 
 
 def test_12_watch_mode_works():

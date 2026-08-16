@@ -88,6 +88,7 @@ class ShareResourceType(str, enum.Enum):
     MEMORY = "memory"
     MEDIA_ITEM = "media_item"
     MEDIA_ALBUM = "media_album"
+    CELEBRATION_ARTIFACT = "celebration_artifact"
 
 
 class RecurrenceFrequency(str, enum.Enum):
@@ -179,6 +180,32 @@ class TransactionRecord:
     related_resource_ids: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     sequence: int = 0
+
+
+@dataclass
+class TrialObservation:
+    trial_id: str = ""
+    observation_id: str = field(default_factory=_new_id)
+    timestamp: datetime.datetime = field(default_factory=_utc_now)
+    actor_account_id: str = ""
+    action_type: str = ""
+    resource_type: str = ""
+    outcome: str = "observed"
+    isolated: bool = True
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TrialSession:
+    trial_id: str = field(default_factory=_new_id)
+    account_id: str = ""
+    family_context_id: str = ""
+    started_at: datetime.datetime = field(default_factory=_utc_now)
+    ended_at: Optional[datetime.datetime] = None
+    is_active: bool = True
+    observed_action_count: int = 0
+    content_isolation_verified: bool = True
+    observations: List[TrialObservation] = field(default_factory=list)
 
 
 
@@ -660,8 +687,9 @@ class Language(str, enum.Enum):
 
 
 class GuideMode(str, enum.Enum):
-    LEARN_BY_DOING = "learn_by_doing"
+    REAL = "real"
     WATCH_JOURNEY = "watch_journey"
+    LEARN_BY_DOING = "learn_by_doing"
 
 
 @dataclass

@@ -61,6 +61,9 @@ from .models import (
     ShareResourceType,
     TimelineItemType,
     TimelineProjectionEntry,
+    TransactionRecord,
+    TrialObservation,
+    TrialSession,
     ValidationReport,
     VisibilityLevel,
     ContextType,
@@ -146,6 +149,16 @@ class AuthorizationService:
         if album.visibility == VisibilityLevel.PRIVATE:
             return account_id == album.owner_id
         if album.visibility == VisibilityLevel.FAMILY:
+            return context is not None and account_id in context.member_ids
+        return False
+
+    def can_view_celebration_artifact(self, account_id: str, artifact: CelebrationArtifact, context: Optional[FamilyContext]) -> bool:
+        if artifact.visibility == VisibilityLevel.PUBLIC:
+            return True
+        if artifact.visibility == VisibilityLevel.PRIVATE:
+            creator_id = artifact.provenance.created_by_id if artifact.provenance else None
+            return account_id == creator_id
+        if artifact.visibility == VisibilityLevel.FAMILY:
             return context is not None and account_id in context.member_ids
         return False
 
@@ -1096,8 +1109,9 @@ class ReminderService:
 
 
 class SharingService:
-    def __init__(self, canonical: CanonicalRepository, auth: AuthorizationService) -> None:
+    def __init__(self, canonical: CanonicalRepository, derived: DerivedRepository, auth: AuthorizationService) -> None:
         self.canonical = canonical
+        self.derived = derived
         self.auth = auth
 
     def create_share_link(
@@ -1154,6 +1168,15 @@ class SharingService:
             if context is None and album.family_context_id:
                 context = self.canonical.get_family_context(album.family_context_id)
             if not self.auth.can_view_media_album(created_by_id, album, context):
+                raise PermissionError("Account is not authorized for target resource")
+        elif resource_type == ShareResourceType.CELEBRATION_ARTIFACT:
+            artifact = self.derived.get_celebration_artifact_by_id(resource_id)
+            if artifact is None:
+                raise ValueError("Referenced celebration artifact does not exist")
+            resource_visibility = artifact.visibility
+            if context is None and artifact.family_context_id:
+                context = self.canonical.get_family_context(artifact.family_context_id)
+            if not self.auth.can_view_celebration_artifact(created_by_id, artifact, context):
                 raise PermissionError("Account is not authorized for target resource")
 
 
@@ -1214,6 +1237,11 @@ class SharingService:
             if album is None or album.visibility == VisibilityLevel.PRIVATE:
                 raise PermissionError("Resource unavailable or private")
             return album
+        elif share_link.resource_type == ShareResourceType.CELEBRATION_ARTIFACT:
+            artifact = self.derived.get_celebration_artifact_by_id(share_link.resource_id)
+            if artifact is None or artifact.visibility == VisibilityLevel.PRIVATE:
+                raise PermissionError("Resource unavailable or private")
+            return artifact
 
         raise ValueError("Invalid resource type")
 
@@ -1225,6 +1253,94 @@ class SharingService:
             raise PermissionError("Only creator can revoke share link")
         share_link.is_revoked = True
         return share_link
+
+
+class TrialObserverService:
+    def __init__(self, canonical: CanonicalRepository) -> None:
+        self.canonical = canonical
+        self.trials: Dict[str, TrialSession] = {}
+
+    def start_trial(self, account_id: str, family_context_id: str) -> TrialSession:
+        existing = self.get_active_trial(account_id)
+        if existing:
+            return existing
+        trial = TrialSession(
+            account_id=account_id,
+            family_context_id=family_context_id,
+            is_active=True,
+        )
+        self.trials[account_id] = trial
+        return trial
+
+    def get_active_trial(self, account_id: str) -> Optional[TrialSession]:
+        trial = self.trials.get(account_id)
+        if trial is None or not trial.is_active:
+            return None
+        return trial
+
+    def get_trial_status(self, account_id: str) -> Dict[str, Any]:
+        trial = self.trials.get(account_id)
+        if trial is None:
+            return {
+                "is_trial_active": False,
+                "trial_id": "",
+                "observed_action_count": 0,
+                "content_isolation_verified": True,
+                "note": "No trial session is active.",
+            }
+        return {
+            "is_trial_active": trial.is_active,
+            "trial_id": trial.trial_id,
+            "observed_action_count": trial.observed_action_count,
+            "content_isolation_verified": trial.content_isolation_verified,
+            "started_at": trial.started_at.isoformat(),
+            "ended_at": trial.ended_at.isoformat() if trial.ended_at else None,
+        }
+
+    def record_observation(
+        self,
+        account_id: str,
+        action_type: str,
+        resource_type: str,
+        outcome: str = "observed",
+        isolated: bool = True,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Optional[TrialObservation]:
+        trial = self.get_active_trial(account_id)
+        if trial is None:
+            return None
+        sanitized: Dict[str, Any] = {}
+        if details:
+            for k, v in details.items():
+                if k in ("resource_id", "resource_label", "outcome"):
+                    sanitized[k] = str(v)
+        observation = TrialObservation(
+            trial_id=trial.trial_id,
+            actor_account_id=account_id,
+            action_type=action_type,
+            resource_type=resource_type,
+            outcome=outcome,
+            isolated=isolated,
+            details=sanitized,
+        )
+        trial.observations.append(observation)
+        trial.observed_action_count += 1
+        trial.content_isolation_verified = trial.content_isolation_verified and isolated
+        return observation
+
+    def end_trial(self, account_id: str) -> Dict[str, Any]:
+        trial = self.trials.get(account_id)
+        if trial is None:
+            return {"status": "not_in_trial"}
+        trial.is_active = False
+        trial.ended_at = datetime.datetime.utcnow()
+        return {
+            "status": "ended",
+            "trial_id": trial.trial_id,
+            "observed_action_count": trial.observed_action_count,
+            "content_isolation_verified": trial.content_isolation_verified,
+            "isolated_action_count": sum(1 for o in trial.observations if o.isolated),
+        }
 
 
 class DashboardService:
@@ -1445,10 +1561,14 @@ class DashboardService:
             projected.append(entry)
 
         for mem in summary.recent_memories:
+            subject_name = ""
+            if mem.subject_id:
+                p = self.canonical.get_person(mem.subject_id)
+                subject_name = f" · {p.name}" if p else ""
             entry = DashboardProjectionEntry(
                 family_context_id=family_context_id,
                 item_type=DashboardEntryType.RECENT_MEMORY,
-                title="Memory",
+                title=f"Memory{subject_name}",
                 subtitle=mem.narrative,
                 date_or_time=mem.recorded_at,
                 ref_id=mem.id,
@@ -3007,7 +3127,7 @@ class MayilGuidedExperienceService:
         self,
         account_id: str,
         family_context_id: str,
-        mode: GuideMode = GuideMode.LEARN_BY_DOING,
+        mode: GuideMode = GuideMode.REAL,
         context_type: ContextType = ContextType.FAMILY,
         age_group: AgeGroup = AgeGroup.MIXED,
         include_family: bool = True,
@@ -3374,14 +3494,69 @@ class MayilGuidedExperienceService:
             {
                 "id": "sim_mem1",
                 "title": "Birthday Cake Surprise",
+                "narrative": "Joyful moment when blowing out candles together as a family. Grandma Mary led the singing and Alice made a wish before the first slice.",
                 "summary": "Joyful moment when blowing out candles.",
                 "ref_event_id": "sim_ev1",
-            }
+                "date": "2026-08-20",
+                "subject_name": "Alice",
+                "primary_media_id": "sim_med1",
+            },
+            {
+                "id": "sim_mem2",
+                "title": "Weekend Getaway Campfire",
+                "narrative": "An evening around the campfire during the weekend getaway. Bob shared old stories while the kids roasted snacks under the stars.",
+                "summary": "Evening campfire stories at the getaway.",
+                "ref_event_id": "sim_ev2",
+                "date": "2026-08-25",
+                "subject_name": "Bob",
+                "primary_media_id": "sim_med2",
+            },
+            {
+                "id": "sim_mem3",
+                "title": "Sunday Family Dinner",
+                "narrative": "Charlie's first attempt at dessert for Sunday dinner. Everyone cheered and the photo captured the proud smile before the plates were cleared.",
+                "summary": "Charlie's first homemade dessert moment.",
+                "ref_event_id": "sim_ev1",
+                "date": "2026-08-16",
+                "subject_name": "Charlie",
+                "primary_media_id": "sim_med3",
+            },
         ]
 
-        # Seed initial simulated media
+        # Seed initial simulated media (tied to exact memory + event ids)
         pw.simulated_media_items = [
-            {"id": "sim_med1", "caption": "Cake Photo", "type": "PHOTO", "url": "/static/demo_cake.jpg"}
+            {
+                "id": "sim_med1",
+                "caption": "Blowing out the birthday candles",
+                "type": "PHOTO",
+                "url": "https://images.unsplash.com/photo-1513151233558-d860c5398176",
+                "memory_id": "sim_mem1",
+                "event_id": "sim_ev1",
+            },
+            {
+                "id": "sim_med2",
+                "caption": "Campfire glow at the weekend getaway",
+                "type": "PHOTO",
+                "url": "https://images.unsplash.com/photo-1475483768296-6163e08872a1",
+                "memory_id": "sim_mem2",
+                "event_id": "sim_ev2",
+            },
+            {
+                "id": "sim_med3",
+                "caption": "Charlie's proud dessert moment",
+                "type": "PHOTO",
+                "url": "https://images.unsplash.com/photo-1551024506-0bccd828d307",
+                "memory_id": "sim_mem3",
+                "event_id": "sim_ev1",
+            },
+            {
+                "id": "sim_med4",
+                "caption": "Cake Photo",
+                "type": "PHOTO",
+                "url": "https://images.unsplash.com/photo-1535140728325-a4d3707eee61",
+                "memory_id": "sim_mem1",
+                "event_id": "sim_ev1",
+            },
         ]
 
         # Seed initial simulated celebration
@@ -3656,13 +3831,24 @@ class MayilGuidedExperienceService:
 
     def exit_practice_world(self, account_id: str) -> Dict[str, Any]:
         pw = self.practice_worlds.get(account_id)
+        restored = False
         if pw:
             pw.is_active = False
             pw.updated_at = datetime.datetime.utcnow()
+            self.practice_worlds.pop(account_id, None)
+            restored = True
+        session = self.guided_sessions.get(account_id)
+        if session and session.current_mode == GuideMode.LEARN_BY_DOING:
+            session.current_mode = GuideMode.REAL
+            session.current_scene_index = 0
+            session.attempts = 0
+            session.completed_scene_ids.clear()
+            session.updated_at = datetime.datetime.utcnow()
         return {
             "status": "exited",
-            "message": "Practice complete. Your real FEMC data was not changed.",
+            "message": "Practice complete. Real FEMC views have been restored.",
             "is_practice_active": False,
+            "real_views_restored": restored,
         }
 
     def get_practice_members_projection(
@@ -3731,13 +3917,16 @@ class MayilGuidedExperienceService:
         timeline_entries = []
         for m in practice_world.simulated_memories:
             ref_evt = next((e for e in practice_world.simulated_events if e["id"] == m.get("ref_event_id")), None)
-            evt_date = ref_evt["date"] if ref_evt else "2026-08-22"
+            evt_date = m.get("date") or (ref_evt["date"] if ref_evt else "2026-08-22")
             timeline_entries.append({
                 "event_id": m.get("ref_event_id", "sim_ev1"),
                 "title": m.get("title"),
                 "date": evt_date,
                 "memory_ids": [m.get("id")],
                 "narrative_excerpt": m.get("summary", ""),
+                "narrative": m.get("narrative", ""),
+                "subject_name": m.get("subject_name", ""),
+                "primary_media_id": m.get("primary_media_id", ""),
             })
         return timeline_entries
 
@@ -3749,6 +3938,8 @@ class MayilGuidedExperienceService:
                 "caption": m.get("caption"),
                 "media_type": m.get("type", "PHOTO").lower(),
                 "uri": m.get("url", "/static/demo_sim_media.jpg"),
+                "memory_id": m.get("memory_id"),
+                "event_id": m.get("event_id"),
             })
         return items
 
