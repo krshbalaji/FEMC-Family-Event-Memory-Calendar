@@ -1305,22 +1305,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     </div>
                 </div>
 
-                <div class="card" style="margin-top:1.5rem; border: 1px dashed var(--purple);">
+                <div class="card" style="margin-top:1.5rem; border:1px dashed var(--purple);">
                     <div class="card-header">
-                        <div class="card-title" style="color:var(--purple);">🧪 External Trial Observer</div>
-                        <span id="trial-state-pill" class="pill pill-general">Inactive</span>
+                        <div class="card-title" style="color:var(--purple);">🧪 Practice Observer</div>
+                        <span id="trial-state-pill" class="pill pill-general">Practice Active</span>
                     </div>
+
                     <div style="font-size:0.85rem; color:var(--text-sub); line-height:1.5; margin-bottom:0.75rem;">
-                        Run a guided external trial. While a trial is active, a neutral observer tracks every action you take against real family data, with full content isolation and a sanitized observation log.
+                        <strong style="color:var(--purple);">Practice Mode is active.</strong>
+                        Explore FEMC naturally. Your practice actions may be quietly observed
+                        to help improve the FEMC experience. Family content is not used for
+                        usability observation.
                     </div>
-                    <div style="display:flex; gap:0.5rem;">
+
+                    <!-- Trial controls remain available to the application internally,
+                        but are not part of the normal participant experience. -->
+                    <div id="trial-qa-controls" style="display:none;">
                         <button class="btn btn-pink btn-sm" onclick="startTrialFlow()">▶ Start Trial</button>
                         <button class="btn btn-outline btn-sm" onclick="loadTrialStatus()">📊 Trial Status</button>
                         <button class="btn btn-outline btn-sm" onclick="exitTrialFlow()">⏹ End Trial</button>
                     </div>
                 </div>
-            `;
-            loadTrialStatus();
+                `;
+                loadTrialStatus();
         }
 
         async function renderFamily(container) {
@@ -3314,11 +3321,34 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             console.error('[FEMC] Runtime error:', e.message);
         });
 
-        (async function boot() {
-            await initMembers();
+        async function ensurePracticeEntry() {
+        try {
+            const data = await fetchAPI('/api/trial/status');
+
+            const active = !!(
+                data.is_trial_active === true ||
+                (data.trial && data.trial.is_active)
+            );
+
+            if (!active) {
+                await fetchAPI('/api/trial/start', {
+                    method: 'POST'
+                });
+            }
+
             await refreshModeBadge();
-            await loadView('home');
-        })();
+            await loadTrialStatus();
+
+        } catch (e) {
+            console.error('[FEMC] Practice entry initialization failed:', e);
+        }
+    }
+
+    (async function boot() {
+        await initMembers();
+        await ensurePracticeEntry();
+        await loadView('home');
+    })();
     </script>
 </body>
 </html>
