@@ -3649,7 +3649,7 @@ class MayilGuidedExperienceService:
             pw.simulated_share_links.append({
                 "id": new_resource_id,
                 "token": f"sim_share_{new_resource_id}",
-                "target_type": resource_type.value,
+                "target_type": str(payload.get("resource_type", "EVENT")).upper(),
                 "target_id": payload.get("target_id", "sim_ev1"),
             })
         elif action_type == ActionType.CREATE and resource_type == ResourceType.PERSON:
@@ -3946,8 +3946,86 @@ class MayilGuidedExperienceService:
     def get_practice_celebrations_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
         return practice_world.simulated_celebrations
 
+    def resolve_practice_share_for_session(
+        self,
+        session_id: str,
+        token: str,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.guided_sessions.get(session_id)
+
+        if not session:
+            return None
+
+        return self.resolve_practice_share(session.account_id, token)
+
     def get_practice_sharing_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
         return practice_world.simulated_share_links
+
+    def resolve_practice_share(self, account_id: str, token: str) -> Optional[Dict[str, Any]]:
+        """
+        Resolve a Practice-world share token without touching canonical sharing data.
+
+        Practice shares are strictly isolated from real family resources.
+        """
+        pw = self.practice_worlds.get(account_id)
+
+        if not pw or not pw.is_active:
+            return None
+
+        link = next(
+            (
+                item
+                for item in pw.simulated_share_links
+                if item.get("token") == token
+            ),
+            None,
+        )
+
+        if not link:
+            return None
+
+        target_type = str(link.get("target_type", "")).upper()
+        target_id = link.get("target_id")
+
+        if not target_id:
+            return None
+
+        if target_type == "EVENT":
+            resource = next(
+                (item for item in pw.simulated_events if item.get("id") == target_id),
+                None,
+            )
+        elif target_type == "MEMORY":
+            resource = next(
+                (item for item in pw.simulated_memories if item.get("id") == target_id),
+                None,
+            )
+        elif target_type in ("MEDIA", "MEDIA_ITEM"):
+            resource = next(
+                (item for item in pw.simulated_media_items if item.get("id") == target_id),
+                None,
+            )
+        elif target_type in (
+            "CELEBRATION",
+            "CELEBRATION_ARTIFACT",
+        ):
+            resource = next(
+                (item for item in pw.simulated_celebrations if item.get("id") == target_id),
+                None,
+            )
+        else:
+            return None
+
+        if resource is None:
+            return None
+
+        return {
+            "token": token,
+            "target_type": target_type,
+            "target_id": target_id,
+            "resource": resource,
+            "is_practice": True,
+        }
 
     def get_practice_history_projection(self, practice_world: MayilPracticeWorld) -> List[Dict[str, Any]]:
         return practice_world.simulated_transactions

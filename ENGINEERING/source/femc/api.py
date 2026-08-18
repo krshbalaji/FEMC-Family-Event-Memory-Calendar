@@ -900,6 +900,17 @@ class FEMCApi:
         session = self._validate_session(session_id)
         return getattr(self.guided_experience, "practice_worlds", {}).get(session.account_id)
 
+    def resolve_practice_share_for_session(
+        self,
+        session_id: str,
+        token: str,
+    ) -> Optional[Dict[str, Any]]:
+        session = self._validate_session(session_id)
+        return self.guided_experience.resolve_practice_share(
+            session.account_id,
+            token,
+        )
+
     def execute_simulated_action_for_session(
         self,
         session_id: str,

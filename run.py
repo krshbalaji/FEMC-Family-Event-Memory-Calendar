@@ -54,6 +54,167 @@ def generate_media_download_filename(caption: str, media_type: str, date_str: st
         ext = ".mp3"
     return f"{clean}_{date_str}{ext}"
 
+def _render_practice_share_page(practice_share):
+    target_type = str(practice_share.get("target_type", "RESOURCE")).upper()
+    resource = practice_share.get("resource") or {}
+    target_id = practice_share.get("target_id", "")
+
+    titles = {
+        "EVENT": "Shared Practice Event",
+        "MEMORY": "Shared Practice Memory",
+        "MEDIA": "Shared Practice Media",
+        "MEDIA_ITEM": "Shared Practice Media",
+        "CELEBRATION": "Shared Practice Celebration",
+        "CELEBRATION_ARTIFACT": "Shared Practice Celebration",
+    }
+
+    badge = target_type.replace("_", " ")
+    title = titles.get(target_type, "Shared Practice Resource")
+
+    rows = []
+
+    if target_type == "EVENT":
+        rows = [
+            ("Title", resource.get("title", "Untitled event")),
+            ("Description", resource.get("description", "—")),
+            ("Date", resource.get("start_time", "—")),
+        ]
+
+    elif target_type == "MEMORY":
+        rows = [
+            ("Story", resource.get("narrative", "—")),
+            ("Event", resource.get("ref_event_id", "—")),
+            ("Memory ID", target_id),
+        ]
+
+    elif target_type in ("MEDIA", "MEDIA_ITEM"):
+        rows = [
+            ("Caption", resource.get("caption", "Family media")),
+            ("Type", resource.get("media_type", "photo")),
+            ("Media ID", target_id),
+        ]
+
+        uri = resource.get("uri")
+        if uri:
+            media_html = (
+                f'<img src="{uri}" alt="Shared practice media" '
+                'style="max-width:100%;max-height:420px;border-radius:10px;'
+                'border:1px solid var(--card-border);" />'
+            )
+        else:
+            media_html = ""
+    else:
+        rows = [
+            ("Title", resource.get("title", "Celebration")),
+            ("Artifact", resource.get("artifact_type", "celebration")),
+            ("Celebration ID", target_id),
+        ]
+
+    body_rows = "".join(
+        f'<div style="display:flex;gap:12px;padding:8px 0;'
+        f'border-bottom:1px solid rgba(255,255,255,0.06);">'
+        f'<div style="min-width:120px;color:var(--text-sub);font-weight:600;">'
+        f'{label}</div><div>{value}</div></div>'
+        for label, value in rows
+    )
+
+    if target_type not in ("MEDIA", "MEDIA_ITEM"):
+        media_html = ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} — FEMC</title>
+<style>
+:root {{
+    --bg-dark:#0f172a;
+    --card-bg:#1e293b;
+    --card-border:#334155;
+    --accent:#38bdf8;
+    --text-main:#f8fafc;
+    --text-sub:#94a3b8;
+}}
+* {{
+    box-sizing:border-box;
+    margin:0;
+    padding:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+}}
+body {{
+    background:var(--bg-dark);
+    color:var(--text-main);
+    min-height:100vh;
+}}
+header {{
+    background:var(--card-bg);
+    border-bottom:1px solid var(--card-border);
+    padding:.85rem 1.5rem;
+}}
+.wrap {{
+    max-width:760px;
+    margin:2rem auto;
+    padding:0 1.25rem;
+}}
+.card {{
+    background:var(--card-bg);
+    border:1px solid var(--card-border);
+    border-radius:12px;
+    padding:1.5rem;
+}}
+.badge {{
+    display:inline-block;
+    background:rgba(56,189,248,.2);
+    color:var(--accent);
+    font-size:.75rem;
+    font-weight:800;
+    letter-spacing:.06em;
+    padding:.25rem .7rem;
+    border-radius:999px;
+    margin-bottom:.6rem;
+}}
+h1 {{
+    font-size:1.5rem;
+    margin-bottom:1rem;
+}}
+.note {{
+    color:var(--text-sub);
+    font-size:.85rem;
+    margin-top:1rem;
+}}
+.practice {{
+    margin-bottom:1rem;
+    padding:.65rem .8rem;
+    border-radius:8px;
+    background:rgba(168,85,247,.12);
+    border:1px solid rgba(168,85,247,.35);
+    color:#d8b4fe;
+    font-size:.85rem;
+}}
+</style>
+</head>
+<body>
+<header>
+    <strong>FEMC</strong> — Family Event &amp; Memory Canvas
+</header>
+<div class="wrap">
+    <div class="card">
+        <div class="practice">
+            PRACTICE MODE · This is simulated family content.
+        </div>
+        <span class="badge">{badge}</span>
+        <h1>{title}</h1>
+        {body_rows}
+        {media_html}
+        <p class="note">
+            This shared resource belongs to the FEMC Practice World.
+            It does not expose real family data.
+        </p>
+    </div>
+</div>
+</body>
+</html>"""
 
 def _render_share_page(api, token):
     try:
@@ -3364,12 +3525,35 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         if path == "/" or path == "/share":
             if path == "/share" and query.get("token"):
                 api = demo_state.api
-                page = _render_share_page(api, query["token"][0])
+                token = query["token"][0]
+
+                if token.startswith("sim_share_"):
+                    try:
+                        practice_share = api.resolve_practice_share_for_session(
+                            demo_state.session_id,
+                            token,
+                        )
+                    except Exception:
+                        practice_share = None
+
+                    if practice_share is not None:
+                        page = _render_practice_share_page(
+                            practice_share
+                        )
+                    else:
+                        page = _render_share_error_page(
+                            "Share link not found",
+                            "This Practice share link does not exist or is no longer active.",
+                        )
+                else:
+                    page = _render_share_page(api, token)
+
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(page.encode("utf-8"))
                 return
+
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
