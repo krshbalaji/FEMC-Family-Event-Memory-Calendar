@@ -36,6 +36,10 @@ from .models import (
 )
 from .services import MayilGuidedExperienceService
 
+# Activate the isolated Practice World visual seed patch after the service
+# class is loaded. This never touches canonical family data.
+from . import practice_visuals as _practice_visuals
+
 __all__ = [
     "FEMCApi",
     "AuthorizationService",
@@ -78,4 +82,5 @@ __all__ = [
     "GuideMode",
     "SceneDefinition",
     "GuideSessionState",
+    "MayilPracticeWorld",
 ]
