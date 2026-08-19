@@ -35,6 +35,15 @@ from .models import (
     MayilPracticeWorld,
 )
 from .services import MayilGuidedExperienceService
+from .mayil_experience import (
+    MayilExperienceProfile,
+    MayilSuggestion,
+    MayilVoiceProfile,
+    build_profile as build_mayil_experience_profile,
+    detect_language as detect_mayil_language,
+    voice_for as mayil_voice_for,
+    suggestions_for_view as mayil_suggestions_for_view,
+)
 
 # Activate the isolated Practice World visual seed patch after the service
 # class is loaded. This never touches canonical family data.
@@ -83,4 +92,11 @@ __all__ = [
     "SceneDefinition",
     "GuideSessionState",
     "MayilPracticeWorld",
+    "MayilExperienceProfile",
+    "MayilSuggestion",
+    "MayilVoiceProfile",
+    "build_mayil_experience_profile",
+    "detect_mayil_language",
+    "mayil_voice_for",
+    "mayil_suggestions_for_view",
 ]
