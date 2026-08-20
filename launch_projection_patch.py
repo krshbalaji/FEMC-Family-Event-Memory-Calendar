@@ -80,8 +80,9 @@ def _event_projection(pw, requested_id=None):
             person = next((p for p in pw.simulated_persons if p.get("id") == pid), None)
             if person:
                 persons.append({"name": person.get("name", "Family Member"), "person_id": pid})
-        detail = {
-            "event_id": selected.get("id"),
+
+        event = {
+            "id": selected.get("id"),
             "title": selected.get("title", "Family Event"),
             "description": selected.get("description", ""),
             "category": str(selected.get("category", "GENERAL")).lower(),
@@ -89,9 +90,22 @@ def _event_projection(pw, requested_id=None):
             "status": selected.get("status", "UPCOMING"),
             "start_time": start,
             "end_time": end,
+            "target_person_ids": selected.get("target_person_ids", []),
+        }
+        detail = {
+            "event_id": selected.get("id"),
+            "event": event,
+            "description": event["description"],
+            "category": event["category"],
+            "visibility": event["visibility"],
+            "status": event["status"],
+            "start_time": start,
+            "end_time": end,
             "target_persons": persons,
             "memories": [],
             "media_items": [],
+            "place": None,
+            "reminders": [],
         }
     return calendar, detail
 
@@ -156,7 +170,6 @@ def _family_projection(runtime, pw):
     )
     practice_names = {p.get("name") for p in pw.simulated_persons}
     relationships = []
-    # Keep the simulated family topology simple and readable while preserving isolation.
     if {"Alice", "Bob"}.issubset(practice_names):
         relationships.append({"source_person_name": "Alice", "target_person_name": "Bob", "relationship_type": "partner", "confidence": "high"})
     if {"Alice", "Charlie"}.issubset(practice_names):
@@ -213,7 +226,6 @@ def install(runtime):
         if pw is None:
             return original_get(self)
 
-        api = runtime.demo_state.api
         if path == "/api/dashboard":
             summary, entries = _dashboard_projection(pw)
             self._send_json({"summary": summary, "entries": entries})
