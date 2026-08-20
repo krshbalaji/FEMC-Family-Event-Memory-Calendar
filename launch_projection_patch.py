@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 from urllib.parse import parse_qs, urlparse
 
 
@@ -39,12 +38,156 @@ def _enrich_event_mutation(runtime):
                         event["visibility"] = str(payload.get("visibility", "FAMILY")).upper()
                         event["description"] = payload.get("description", event.get("description", ""))
                         event["target_person_ids"] = list(payload.get("target_person_ids", event.get("target_person_ids", [])))
+                        start_date = (payload.get("start_date") or "").strip()
+                        start_time = (payload.get("start_time") or "").strip()
+                        end_date = (payload.get("end_date") or start_date).strip()
+                        end_time = (payload.get("end_time") or "").strip()
+                        if start_date:
+                            event["date"] = start_date
+                            event["start_date"] = start_date
+                        if start_time:
+                            event["start_time"] = f"{start_date}T{start_time}:00"
+                        if end_date:
+                            event["end_date"] = end_date
+                        if end_time:
+                            event["end_time"] = f"{end_date}T{end_time}:00"
         except Exception:
             pass
         return result
 
     guided.execute_simulated_action = patched
     guided._femc_projection_patch = True
+
+
+def _install_event_form_patch(runtime):
+    """Replace only the Practice event form/submit functions after the known-good runtime script loads."""
+    html = runtime.HTML_TEMPLATE
+    if "FEMC_PRACTICE_EVENT_DATETIME_PATCH" in html:
+        return
+    script = r'''
+<script id="FEMC_PRACTICE_EVENT_DATETIME_PATCH">
+(() => {
+  const originalOpenCreateEventModal = window.openCreateEventModal;
+
+  window.openCreateEventModal = function () {
+    const container = document.getElementById('modal-container');
+    if (!container) return originalOpenCreateEventModal?.();
+    const memberCheckboxes = (window.membersData || []).map(m => `
+      <label class="checkbox-item">
+        <input type="checkbox" name="target_persons" value="${m.person_id}" />
+        ${m.name} (${m.email})
+      </label>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-card">
+          <div class="card-header">
+            <div class="card-title">📅 Schedule Family Event</div>
+            <button class="btn btn-outline" style="padding:0.2rem 0.5rem;" onclick="closeModal()">✕</button>
+          </div>
+          <form onsubmit="submitCreateEvent(event)">
+            <div class="form-group">
+              <label class="form-label">Event Title</label>
+              <input type="text" id="evt-title" class="form-input" placeholder="e.g. Family Game Night" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Category</label>
+              <select id="evt-cat" class="form-select">
+                <option value="GENERAL" selected>General</option>
+                <option value="BIRTHDAY">Birthday</option>
+                <option value="ANNIVERSARY">Anniversary</option>
+                <option value="MILESTONE">Milestone</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Start Date</label>
+              <input type="date" id="evt-start-date" class="form-input" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Start Time</label>
+              <input type="time" id="evt-start-time" class="form-input" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">End Date</label>
+              <input type="date" id="evt-end-date" class="form-input" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">End Time</label>
+              <input type="time" id="evt-end-time" class="form-input" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Target Family Member(s)</label>
+              <div class="checkbox-group">${memberCheckboxes}</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Visibility</label>
+              <select id="evt-vis" class="form-select">
+                <option value="FAMILY" selected>Family Visible (All Members)</option>
+                <option value="PRIVATE">Private (Only You)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Description</label>
+              <input type="text" id="evt-desc" class="form-input" placeholder="Event details..." />
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
+              <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+              <button type="submit" class="btn">Create Event</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+    container.style.display = 'block';
+  };
+
+  window.submitCreateEvent = async function (evt) {
+    evt.preventDefault();
+    const title = document.getElementById('evt-title').value.trim();
+    const category = document.getElementById('evt-cat').value;
+    const visibility = document.getElementById('evt-vis').value;
+    const description = document.getElementById('evt-desc').value.trim();
+    const startDate = document.getElementById('evt-start-date').value;
+    const startTime = document.getElementById('evt-start-time').value;
+    const endDate = document.getElementById('evt-end-date').value;
+    const endTime = document.getElementById('evt-end-time').value;
+
+    if (!startDate || !startTime || !endDate || !endTime) {
+      alert('Please enter the start and end date/time.');
+      return;
+    }
+    const start = new Date(`${startDate}T${startTime}`);
+    const end = new Date(`${endDate}T${endTime}`);
+    if (!(start.getTime() < end.getTime())) {
+      alert('End date/time must be after start date/time.');
+      return;
+    }
+
+    const selectedCheckboxes = document.querySelectorAll('input[name="target_persons"]:checked');
+    const target_person_ids = Array.from(selectedCheckboxes).map(cb => cb.value);
+
+    await fetchAPI('/api/events/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title,
+        category,
+        visibility,
+        description,
+        target_person_ids,
+        start_date: startDate,
+        start_time: startTime,
+        end_date: endDate,
+        end_time: endTime
+      })
+    });
+
+    closeModal();
+    await loadView('calendar');
+  };
+})();
+</script>'''
+    runtime.HTML_TEMPLATE = html.replace("</body>", script + "\n</body>")
 
 
 def _event_projection(pw, requested_id=None):
@@ -57,7 +200,7 @@ def _event_projection(pw, requested_id=None):
 
     calendar = []
     for e in events:
-        date = e.get("date", "2026-08-22")
+        date = e.get("date") or e.get("start_date") or ""
         calendar.append({
             "event_id": e.get("id"),
             "title": e.get("title", "Family Event"),
@@ -72,15 +215,13 @@ def _event_projection(pw, requested_id=None):
 
     detail = {}
     if selected:
-        date = selected.get("date", "2026-08-22")
-        start = selected.get("start_time") or f"{date}T18:00:00"
-        end = selected.get("end_time") or f"{date}T20:00:00"
+        start = selected.get("start_time")
+        end = selected.get("end_time")
         persons = []
         for pid in selected.get("target_person_ids", []):
             person = next((p for p in pw.simulated_persons if p.get("id") == pid), None)
             if person:
                 persons.append({"name": person.get("name", "Family Member"), "person_id": pid})
-
         event = {
             "id": selected.get("id"),
             "title": selected.get("title", "Family Event"),
@@ -149,7 +290,6 @@ def _dashboard_projection(pw):
             "ref_id": c.get("id", ""),
             "visibility": "family",
         })
-
     summary = {
         "family_context": {"id": pw.family_context_id, "name": "Practice Family"},
         "member_count": len(pw.simulated_persons),
@@ -213,6 +353,7 @@ def _sharing_projection(pw):
 
 def install(runtime):
     _enrich_event_mutation(runtime)
+    _install_event_form_patch(runtime)
     handler = runtime.DemoHTTPRequestHandler
     if getattr(handler, "_femc_live_practice_projection", False):
         return
@@ -225,7 +366,6 @@ def install(runtime):
         pw = _practice_state(runtime)
         if pw is None:
             return original_get(self)
-
         if path == "/api/dashboard":
             summary, entries = _dashboard_projection(pw)
             self._send_json({"summary": summary, "entries": entries})
