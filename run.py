@@ -1,7 +1,9 @@
 import runtime
 from launch_projection_patch import install
+from event_edit_patch import install as install_event_edit
 
 install(runtime)
+install_event_edit(runtime)
 
 
 if __name__ == "__main__":
