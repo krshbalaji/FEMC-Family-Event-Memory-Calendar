@@ -7,6 +7,7 @@ from sharing_label_patch import install as install_sharing_label_patch
 from practice_sharing_celebration_projection_patch import install as install_practice_sharing_celebration_projection
 from practice_shared_celebration_context_patch import install as install_practice_shared_celebration_context
 from event_intelligence_patch import install as install_event_intelligence
+from practice_runtime_fix_patch import install as install_practice_runtime_fix
 
 install(runtime)
 install_event_edit(runtime)
@@ -16,6 +17,7 @@ install_sharing_label_patch(runtime)
 install_practice_sharing_celebration_projection(runtime)
 install_practice_shared_celebration_context(runtime)
 install_event_intelligence(runtime)
+install_practice_runtime_fix(runtime)
 
 
 if __name__ == "__main__":
