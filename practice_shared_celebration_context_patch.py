@@ -4,6 +4,14 @@ import datetime
 import html
 
 
+def _same_id(left, right):
+    left = str(left or "")
+    right = str(right or "")
+    if not left or not right:
+        return False
+    return left == right or left.endswith("_" + right) or right.endswith("_" + left)
+
+
 def _friendly_datetime(value):
     text = str(value or "").strip()
     if not text:
@@ -167,6 +175,32 @@ h1 {{ font-size:1.5rem; margin-bottom:1rem; }}
 </html>'''
 
 
+def _enrich_from_practice_world(runtime, practice_share):
+    enriched = dict(practice_share or {})
+    resource = enriched.get("resource")
+    if not isinstance(resource, dict):
+        resource = {}
+    merged = dict(resource)
+    target_id = enriched.get("target_id") or merged.get("id")
+
+    try:
+        session_id = runtime.demo_state.session_id
+        pw = runtime.demo_state.api.get_practice_world_state_for_session(session_id)
+        artifacts = list(getattr(pw, "simulated_celebrations", []) or []) if pw is not None else []
+        artifact = next((row for row in artifacts if _same_id(row.get("id"), target_id)), None)
+        if artifact is None:
+            artifact = next((row for row in artifacts if _same_id(row.get("source_event_id"), target_id)), None)
+        if artifact:
+            merged = {**artifact, **merged}
+            if not merged.get("id"):
+                merged["id"] = artifact.get("id")
+    except Exception:
+        pass
+
+    enriched["resource"] = merged
+    return enriched
+
+
 def install(runtime):
     original = runtime._render_practice_share_page
     if getattr(runtime, "_femc_practice_shared_celebration_context_patch", False):
@@ -175,7 +209,8 @@ def install(runtime):
     def patched(practice_share):
         target_type = str((practice_share or {}).get("target_type", "")).upper()
         if target_type in ("CELEBRATION", "CELEBRATION_ARTIFACT"):
-            rendered = _render_practice_share_page(practice_share or {})
+            enriched = _enrich_from_practice_world(runtime, practice_share or {})
+            rendered = _render_practice_share_page(enriched)
             if rendered is not None:
                 return rendered
         return original(practice_share)
