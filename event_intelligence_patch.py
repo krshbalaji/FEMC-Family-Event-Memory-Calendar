@@ -3,11 +3,11 @@ from __future__ import annotations
 
 def install(runtime):
     html = runtime.HTML_TEMPLATE
-    marker = "FEMC_EVENT_INTELLIGENCE_V2_PATCH"
+    marker = "FEMC_EVENT_INTELLIGENCE_V3_PATCH"
     if marker in html:
         return
 
-    script = r'''<script id="FEMC_EVENT_INTELLIGENCE_V2_PATCH">
+    script = r'''<script id="FEMC_EVENT_INTELLIGENCE_V3_PATCH">
 (() => {
   const DAY_MS = 86400000;
   const pad = n => String(n).padStart(2,'0');
@@ -23,7 +23,9 @@ def install(runtime):
 
   let activeDraft = null;
   let activeInsights = null;
-  let activeMode = null;
+
+  const createOpenOriginal = window.openCreateEventModal;
+  const editOpenOriginal = window.openPracticeEventEditor;
 
   function captureDraft(mode,eventId) {
     const p=mode==='edit'?'edit-':'';
@@ -44,12 +46,25 @@ def install(runtime):
   function restoreDraft(d) {
     if(!d)return;
     const p=d.mode==='edit'?'edit-':'';
-    const set=(id,v)=>{const el=document.getElementById(id); if(el&&v!==undefined){el.value=v;el.dispatchEvent(new Event('change',{bubbles:true}));}};
+    const set=(id,v)=>{const el=document.getElementById(id); if(el&&v!==undefined){el.value=v;el.dispatchEvent(new Event('change',{bubbles:true}));el.dispatchEvent(new Event('input',{bubbles:true}));}};
     set(`${p}evt-title`,d.title); set(`${p}evt-cat`,d.category); set(`${p}evt-start-date`,d.start_date); set(`${p}evt-start-time`,d.start_time); set(`${p}evt-end-date`,d.end_date); set(`${p}evt-end-time`,d.end_time);
     const desc=document.getElementById(`${p}evt-description`)||document.getElementById(`${p}evt-desc`); if(desc){desc.value=d.description||'';desc.dispatchEvent(new Event('input',{bubbles:true}));}
     if(d.visibility)set(`${p}evt-visibility`,d.visibility);
     const name=d.mode==='edit'?'edit_target_persons':'target_persons';
     document.querySelectorAll(`input[name="${name}"]`).forEach(x=>{x.checked=d.people.includes(x.value);x.dispatchEvent(new Event('change',{bubbles:true}));});
+  }
+
+  async function reopenSchedulerFromDraft() {
+    const d=clone(activeDraft);
+    if(!d)return;
+    if(d.mode==='edit' && editOpenOriginal && d.eventId){
+      await editOpenOriginal(d.eventId);
+    } else if(createOpenOriginal) {
+      await createOpenOriginal();
+    } else {
+      return;
+    }
+    setTimeout(()=>{restoreDraft(d); addControls(document.querySelector(d.mode==='edit'?'form[onsubmit*="submitPracticeEventEdit"]':'form[onsubmit*="submitCreateEvent"]'),d.mode==='edit'?'edit-':''); enhanceDateTimeInputs(d.mode==='edit'?'edit-':'');},80);
   }
 
   async function insightsFor(v){
@@ -68,6 +83,11 @@ def install(runtime):
       `<strong>${esc(e.title||'Family event')}</strong><br><span style="font-size:.85rem;opacity:.75;">${esc(longDate(eventDate(e)))} · ${esc(e.category||'EVENT')}</span></button>`).join('');
   }
 
+  async function returnToScheduler(){
+    closeModal();
+    await reopenSchedulerFromDraft();
+  }
+
   function openReviewDrawer(){
     if(!activeDraft||!activeInsights)return;
     const c=document.getElementById('modal-container'); if(!c)return;
@@ -78,7 +98,7 @@ def install(runtime):
       <aside style="width:min(520px,100vw);height:100%;background:var(--surface,#fff);padding:1rem 1rem 2rem;overflow:auto;box-shadow:-10px 0 30px rgba(0,0,0,.2);">
         <div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;"><div class="card-title">🌸 ${esc(title)}</div><button type="button" class="btn btn-outline btn-sm" id="femc-review-close">× Close</button></div>
         <div style="margin:1rem 0;padding:.85rem;border-radius:.7rem;background:rgba(127,127,127,.08);"><strong>${esc(activeDraft.title||'Untitled event')}</strong><br>${esc(longDate(activeDraft.start_date))} · ${esc(relative(activeDraft.start_date))}</div>
-        ${n<0?`<div style="margin:.8rem 0;line-height:1.5;">This selected event is in the past. Review the precise date above, then inspect only related family records if useful. Your event draft remains open and unchanged behind this aisle.</div>`:''}
+        ${n<0?`<div style="margin:.8rem 0;line-height:1.5;">This selected event is in the past. Review the precise date above, then inspect only related family records if useful. Your event draft is preserved exactly and will reopen when you return.</div>`:''}
         ${focus.length?`<h4 style="margin:1.2rem 0 .4rem;">Most relevant record${focus.length>1?'s':''}</h4>${relatedRows(focus,'focus')}`:''}
         ${activeInsights.sameDay.length?`<h4 style="margin:1.2rem 0 .4rem;">Same-date records</h4>${relatedRows(activeInsights.sameDay,'sameDay')}`:''}
         ${activeInsights.around.length?`<h4 style="margin:1.2rem 0 .4rem;">Related events around this date</h4>${relatedRows(activeInsights.around,'around')}`:''}
@@ -86,8 +106,8 @@ def install(runtime):
         <div style="position:sticky;bottom:0;background:var(--surface,#fff);padding-top:1rem;"><button type="button" class="btn" id="femc-review-return">← Return to Event Scheduler</button></div>
       </aside></div>`;
     c.style.display='block';
-    const close=()=>{closeModal();setTimeout(()=>restoreDraft(activeDraft),0);};
-    document.getElementById('femc-review-close').onclick=close; document.getElementById('femc-review-return').onclick=close;
+    document.getElementById('femc-review-close').onclick=returnToScheduler;
+    document.getElementById('femc-review-return').onclick=returnToScheduler;
     c.querySelectorAll('[data-femc-related]').forEach(btn=>btn.onclick=()=>{
       const [kind,index]=btn.dataset.femcRelated.split(':'); const e=(activeInsights[kind]||[])[Number(index)]; const detail=document.getElementById('femc-related-detail'); if(!e)return;
       detail.innerHTML=`<div style="padding:1rem;border-radius:.7rem;border:1px solid rgba(127,127,127,.18);"><strong>${esc(e.title||'Family event')}</strong><p>${esc(longDate(eventDate(e)))}</p><p>${esc(e.description||e.details||'No additional details recorded.')}</p><button type="button" class="btn btn-outline btn-sm" id="femc-related-back">Back to list</button></div>`;
@@ -96,7 +116,7 @@ def install(runtime):
   }
 
   async function mayilCheck(v){
-    activeDraft=clone(v); activeMode=v.mode; activeInsights=await insightsFor(v);
+    activeDraft=clone(v); activeInsights=await insightsFor(v);
     const c=document.getElementById('modal-container');if(!c)return true;
     const n=delta(v.start_date), messages=[`📅 <strong>Selected:</strong> ${esc(longDate(v.start_date))} · ${esc(relative(v.start_date))}`];
     if(n<0)messages.push('🟠 This event is in the past. Mayil is checking whether this is intentional.');
@@ -104,15 +124,34 @@ def install(runtime):
     else if(activeInsights.samePerson.length)messages.push(`🌸 Mayil found a related family milestone previously recorded on ${esc(longDate(eventDate(activeInsights.samePerson[0])))}.`);
     if(activeInsights.sameDay.length)messages.push(`✨ Mayil recognized ${activeInsights.sameDay.length} existing family record${activeInsights.sameDay.length===1?'':'s'} on this same date.`);
     return await new Promise(resolve=>{
-      c.innerHTML=`<div class="modal-overlay"><div class="modal-card" style="max-width:620px;"><div class="card-header"><div class="card-title">🌸 Mayil Event Check</div></div><div style="padding:.3rem 0 1rem;">${messages.map(x=>`<div style="padding:.65rem .75rem;margin:.45rem 0;border-radius:.6rem;background:rgba(127,127,127,.07);line-height:1.45;">${x}</div>`).join('')}</div><div style="font-size:.9rem;opacity:.8;margin-bottom:1rem;">Reviewing details will keep this unsaved Event Scheduler open. Nothing you entered will be lost.</div><div style="display:flex;justify-content:flex-end;gap:.5rem;flex-wrap:wrap;"><button type="button" class="btn btn-outline" id="femc-mayil-review">Review Details</button><button type="button" class="btn" id="femc-mayil-confirm">Save with This Date</button></div></div></div>`;
+      c.innerHTML=`<div class="modal-overlay"><div class="modal-card" style="max-width:620px;"><div class="card-header"><div class="card-title">🌸 Mayil Event Check</div></div><div style="padding:.3rem 0 1rem;">${messages.map(x=>`<div style="padding:.65rem .75rem;margin:.45rem 0;border-radius:.6rem;background:rgba(127,127,127,.07);line-height:1.45;">${x}</div>`).join('')}</div><div style="font-size:.9rem;opacity:.8;margin-bottom:1rem;">Reviewing details preserves this unsaved scheduler draft. Return will reopen the same Event Scheduler with every field intact.</div><div style="display:flex;justify-content:flex-end;gap:.5rem;flex-wrap:wrap;"><button type="button" class="btn btn-outline" id="femc-mayil-review">Review Details</button><button type="button" class="btn" id="femc-mayil-confirm">Save with This Date</button></div></div></div>`;
       c.style.display='block';
       document.getElementById('femc-mayil-review').onclick=()=>{closeModal();setTimeout(openReviewDrawer,0);resolve(false);};
       document.getElementById('femc-mayil-confirm').onclick=()=>{closeModal();resolve(true);};
     });
   }
 
+  function enhanceOneInput(el,type){
+    if(!el||el.dataset.femcPickerEnhanced)return;
+    el.dataset.femcPickerEnhanced='1';
+    el.type=type;
+    el.inputMode=type==='time'?'numeric':'text';
+    const hint=document.createElement('div');
+    hint.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.35rem;font-size:.78rem;opacity:.72;';
+    hint.innerHTML=`<span>${type==='date'?'Type the date or use the calendar':'Type the time or use the clock'}</span><button type="button" class="btn btn-outline btn-sm" style="padding:.2rem .45rem;" data-femc-open-picker>${type==='date'?'📅 Calendar':'🕒 Clock'}</button>`;
+    el.insertAdjacentElement('afterend',hint);
+    hint.querySelector('[data-femc-open-picker]').onclick=()=>{try{el.showPicker?.();}catch(_){el.focus();}};
+  }
+
+  function enhanceDateTimeInputs(prefix=''){
+    ['start-date','end-date'].forEach(x=>enhanceOneInput(document.getElementById(`${prefix}evt-${x}`),'date'));
+    ['start-time','end-time'].forEach(x=>enhanceOneInput(document.getElementById(`${prefix}evt-${x}`),'time'));
+  }
+
   function addControls(form,prefix){
-    if(!form||form.querySelector('.femc-event-intelligence'))return;
+    if(!form)return;
+    enhanceDateTimeInputs(prefix);
+    if(form.querySelector('.femc-event-intelligence'))return;
     const input=document.getElementById(`${prefix}evt-start-date`);if(!input)return;
     const box=document.createElement('div');box.className='form-group femc-event-intelligence';box.innerHTML=`<label class="form-label">How should Mayil understand this event?</label><div style="display:flex;gap:.5rem;flex-wrap:wrap;"><button type="button" class="btn btn-outline btn-sm" data-t="past">⏪ Past</button><button type="button" class="btn btn-outline btn-sm" data-t="today">● Today</button><button type="button" class="btn btn-outline btn-sm" data-t="future">⏩ Future</button></div><div class="femc-date-status" style="margin-top:.65rem;padding:.65rem;border-radius:.6rem;background:rgba(127,127,127,.08);"></div>`;
     input.closest('.form-group')?.before(box);const status=box.querySelector('.femc-date-status');
@@ -124,10 +163,15 @@ def install(runtime):
   const createOriginal=window.submitCreateEvent;
   window.submitCreateEvent=async function(evt){evt.preventDefault();const v=captureDraft('create');if(!v.start_date){alert('Please choose an event date.');return;}if(!(await mayilCheck(v)))return;return createOriginal(evt);};
   const editOriginal=window.submitPracticeEventEdit;
-  window.submitPracticeEventEdit=async function(evt,eventId){evt.preventDefault();const v=captureDraft('edit',eventId);if(!v.start_date){alert('Please choose an event date.');return;}if(!(await mayilCheck(v)))return;return editOriginal(evt,eventId);};
-  const openEdit=window.openPracticeEventEditor;
-  if(openEdit)window.openPracticeEventEditor=async function(id){const r=await openEdit(id);setTimeout(()=>addControls(document.querySelector('form[onsubmit*="submitPracticeEventEdit"]'),'edit-'),0);return r;};
-  new MutationObserver(()=>addControls(document.querySelector('form[onsubmit*="submitCreateEvent"]'),'' )).observe(document.documentElement,{childList:true,subtree:true});
+  if(editOriginal)window.submitPracticeEventEdit=async function(evt,eventId){evt.preventDefault();const v=captureDraft('edit',eventId);if(!v.start_date){alert('Please choose an event date.');return;}if(!(await mayilCheck(v)))return;return editOriginal(evt,eventId);};
+
+  if(editOpenOriginal)window.openPracticeEventEditor=async function(id){const r=await editOpenOriginal(id);setTimeout(()=>addControls(document.querySelector('form[onsubmit*="submitPracticeEventEdit"]'),'edit-'),0);return r;};
+  if(createOpenOriginal)window.openCreateEventModal=async function(){const r=await createOpenOriginal();setTimeout(()=>addControls(document.querySelector('form[onsubmit*="submitCreateEvent"]'),''),0);return r;};
+
+  new MutationObserver(()=>{
+    addControls(document.querySelector('form[onsubmit*="submitCreateEvent"]'),'');
+    addControls(document.querySelector('form[onsubmit*="submitPracticeEventEdit"]'),'edit-');
+  }).observe(document.documentElement,{childList:true,subtree:true});
 })();
 </script>'''
     runtime.HTML_TEMPLATE = html.replace('</body>', script + '\n</body>')
