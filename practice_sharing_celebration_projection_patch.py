@@ -39,12 +39,15 @@ def _find_by_id(rows, target_id):
 
 def _resolve_link(pw, link):
     target_type = _norm_type(link.get("target_type", "event"))
-    target_id = str(link.get("target_id", ""))
+    target_id = str(link.get("target_id") or link.get("resource_id") or "")
+    embedded = link.get("resource") if isinstance(link.get("resource"), dict) else {}
 
     if target_type == "event":
         event = _find_by_id(getattr(pw, "simulated_events", []), target_id)
         if event:
             return "event", event.get("id", target_id), event.get("title") or "Family Event"
+        if embedded:
+            return "event", target_id, embedded.get("title") or "Family Event"
 
     if target_type in ("celebration", "celebration_artifact"):
         artifacts = list(getattr(pw, "simulated_celebrations", []) or [])
@@ -56,19 +59,27 @@ def _resolve_link(pw, link):
             )
         if artifact:
             return "celebration_artifact", artifact.get("id", target_id), artifact.get("title") or "Celebration"
+        if embedded:
+            return "celebration_artifact", target_id, embedded.get("title") or "Celebration"
 
     if target_type == "memory":
         memory = _find_by_id(getattr(pw, "simulated_memories", []), target_id)
         if memory:
             return "memory", memory.get("id", target_id), memory.get("title") or memory.get("narrative") or "Family Memory"
+        if embedded:
+            return "memory", target_id, embedded.get("title") or embedded.get("narrative") or "Family Memory"
 
     if target_type in ("media", "media_item"):
         media = _find_by_id(getattr(pw, "simulated_media_items", []), target_id)
         if media:
             return "media_item", media.get("id", target_id), media.get("caption") or "Media item"
+        if embedded:
+            return "media_item", target_id, embedded.get("caption") or "Media item"
 
     snapshot = (
-        link.get("resource_label")
+        embedded.get("title")
+        or embedded.get("caption")
+        or link.get("resource_label")
         or link.get("target_title")
         or link.get("title")
         or ""
