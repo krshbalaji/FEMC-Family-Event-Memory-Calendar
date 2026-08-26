@@ -4,12 +4,14 @@ from event_edit_patch import install as install_event_edit
 from event_create_sync_patch import install as install_event_create_sync
 from event_celebration_integration_patch import install as install_event_celebration_integration
 from sharing_label_patch import install as install_sharing_label_patch
+from practice_sharing_celebration_projection_patch import install as install_practice_sharing_celebration_projection
 
 install(runtime)
 install_event_edit(runtime)
 install_event_create_sync(runtime)
 install_event_celebration_integration(runtime)
 install_sharing_label_patch(runtime)
+install_practice_sharing_celebration_projection(runtime)
 
 
 if __name__ == "__main__":
