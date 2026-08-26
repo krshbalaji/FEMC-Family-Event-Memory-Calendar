@@ -3,268 +3,101 @@ from __future__ import annotations
 
 def install(runtime):
     html = runtime.HTML_TEMPLATE
-    marker = "FEMC_EVENT_INTELLIGENCE_V4_PATCH"
+    marker = "FEMC_EVENT_INTELLIGENCE_V5_PATCH"
     if marker in html:
         return
 
-    script = r'''<script id="FEMC_EVENT_INTELLIGENCE_V4_PATCH">
+    script = r'''<script id="FEMC_EVENT_INTELLIGENCE_V5_PATCH">
 (() => {
   const DAY_MS = 86400000;
+  const DRAFT_KEY = 'femc.eventSchedulerDraft.v5';
   const pad = n => String(n).padStart(2,'0');
   const esc = v => String(v ?? '').replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const clone = o => JSON.parse(JSON.stringify(o || {}));
-  const DRAFT_KEY = 'femc.eventSchedulerDraft.v2';
-
-  const getTimeZone = () => window.FEMC_TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  const zonedParts = (value = new Date(), timeZone = getTimeZone()) => {
-    const parts = new Intl.DateTimeFormat('en-US', {timeZone, year:'numeric', month:'2-digit', day:'2-digit'}).formatToParts(value);
-    const out = {};
-    parts.forEach(p => { if (p.type !== 'literal') out[p.type] = p.value; });
-    return out;
+  const tz = () => window.FEMC_TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const zoned = (value = new Date(), timeZone = tz()) => {
+    const parts = new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(value);
+    const out={}; parts.forEach(p=>{if(p.type!=='literal')out[p.type]=p.value;}); return out;
   };
-  const todayISO = (timeZone = getTimeZone()) => {
-    const p = zonedParts(new Date(), timeZone);
-    return `${p.year}-${p.month}-${p.day}`;
-  };
-  const isoDay = iso => {
-    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    return m ? Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / DAY_MS) : null;
-  };
-  const shiftISO = (iso, days) => {
-    const n = isoDay(iso);
-    if (n === null) return '';
-    return new Date((n + days) * DAY_MS).toISOString().slice(0,10);
-  };
-  const longDate = iso => {
-    if (!iso) return '';
-    const n = isoDay(iso);
-    if (n === null) return String(iso);
-    return new Intl.DateTimeFormat(undefined, {timeZone:'UTC', weekday:'long', year:'numeric', month:'long', day:'numeric'}).format(new Date((n + 0.5) * DAY_MS));
-  };
-  const delta = (iso, timeZone = getTimeZone()) => {
-    const n = isoDay(iso), t = isoDay(todayISO(timeZone));
-    return n === null || t === null ? null : n - t;
-  };
-  const relative = iso => {
-    const n = delta(iso);
-    if (n === null) return '';
-    if (n === 0) return 'Today';
-    return n < 0 ? `${Math.abs(n)} day${Math.abs(n)===1?'':'s'} ago` : `In ${n} day${n===1?'':'s'}`;
-  };
-  const eventList = d => d?.calendar || d?.events || d?.items || [];
-  const eventDate = e => String(e?.start_date || e?.date || e?.start_time || '').slice(0,10);
-  const normalize = x => String(x || '').trim().toUpperCase();
+  const todayISO = () => { const p=zoned(); return `${p.year}-${p.month}-${p.day}`; };
+  const isoDay = iso => { const m=String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? Math.floor(Date.UTC(+m[1],+m[2]-1,+m[3])/DAY_MS) : null; };
+  const shiftISO = (iso,days) => { const n=isoDay(iso); return n===null?'':new Date((n+days)*DAY_MS).toISOString().slice(0,10); };
+  const longDate = iso => { const n=isoDay(iso); return n===null?String(iso||''):new Intl.DateTimeFormat(undefined,{timeZone:'UTC',weekday:'long',year:'numeric',month:'long',day:'numeric'}).format(new Date((n+.5)*DAY_MS)); };
+  const delta = iso => { const a=isoDay(iso),b=isoDay(todayISO()); return a===null||b===null?null:a-b; };
+  const relative = iso => { const n=delta(iso); if(n===null)return ''; if(n===0)return 'Today'; return n<0?`${Math.abs(n)} day${Math.abs(n)===1?'':'s'} ago`:`In ${n} day${n===1?'':'s'}`; };
+  const normalize=x=>String(x||'').trim().toUpperCase();
+  const eventList=d=>Array.isArray(d)?d:(d?.calendar||d?.events||d?.items||[]);
+  const eventDate=e=>String(e?.start_date||e?.date||e?.start_time||'').slice(0,10);
 
-  let activeDraft = null;
-  let activeInsights = null;
-  let createOpenOriginal = null;
-  let editOpenOriginal = null;
-  let createSubmitOriginal = null;
-  let editSubmitOriginal = null;
+  let activeDraft=null, activeInsights=null, createOpenOriginal=null, editOpenOriginal=null, createSubmitOriginal=null, editSubmitOriginal=null, saving=false;
+  const saveDraft=d=>{try{sessionStorage.setItem(DRAFT_KEY,JSON.stringify(d));}catch(_){}};
+  const loadDraft=()=>{try{return clone(JSON.parse(sessionStorage.getItem(DRAFT_KEY)||'null'));}catch(_){return null;}};
+  const clearDraft=()=>{try{sessionStorage.removeItem(DRAFT_KEY);}catch(_){}};
 
-  function saveDraft(d) { try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (_) {} }
-  function loadDraft() { try { return clone(JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null')); } catch (_) { return null; } }
-  function clearDraft() { try { sessionStorage.removeItem(DRAFT_KEY); } catch (_) {} }
+  function captureDraft(mode,eventId){
+    const p=mode==='edit'?'edit-':'';
+    return {mode,eventId:eventId||null,title:document.getElementById(`${p}evt-title`)?.value||'',category:document.getElementById(`${p}evt-cat`)?.value||'GENERAL',start_date:document.getElementById(`${p}evt-start-date`)?.value||'',start_time:document.getElementById(`${p}evt-start-time`)?.value||'',end_date:document.getElementById(`${p}evt-end-date`)?.value||'',end_time:document.getElementById(`${p}evt-end-time`)?.value||'',description:document.getElementById(`${p}evt-description`)?.value||document.getElementById(`${p}evt-desc`)?.value||'',visibility:document.getElementById(`${p}evt-visibility`)?.value||'',people:Array.from(document.querySelectorAll(`input[name="${mode==='edit'?'edit_target_persons':'target_persons'}"]:checked`)).map(x=>String(x.value)),time_zone:tz(),saved_at:new Date().toISOString()};
+  }
+  function restoreDraft(d){
+    if(!d)return; const p=d.mode==='edit'?'edit-':'';
+    const set=(id,v)=>{const e=document.getElementById(id);if(!e||v===undefined)return;e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));};
+    set(`${p}evt-title`,d.title);set(`${p}evt-cat`,d.category);set(`${p}evt-start-date`,d.start_date);set(`${p}evt-start-time`,d.start_time);set(`${p}evt-end-date`,d.end_date);set(`${p}evt-end-time`,d.end_time);set(`${p}evt-visibility`,d.visibility);
+    const desc=document.getElementById(`${p}evt-description`)||document.getElementById(`${p}evt-desc`); if(desc){desc.value=d.description||'';desc.dispatchEvent(new Event('input',{bubbles:true}));desc.dispatchEvent(new Event('change',{bubbles:true}));}
+    const name=d.mode==='edit'?'edit_target_persons':'target_persons'; document.querySelectorAll(`input[name="${name}"]`).forEach(x=>{x.checked=(d.people||[]).includes(String(x.value));x.dispatchEvent(new Event('change',{bubbles:true}));});
+  }
+  function wireDraft(form,mode,eventId){if(!form||form.dataset.femcDraftV5)return;form.dataset.femcDraftV5='1';const persist=()=>{const d=captureDraft(mode,eventId);if(d.title||d.start_date||d.description||d.people.length)saveDraft(d);};form.addEventListener('input',persist,true);form.addEventListener('change',persist,true);}
 
-  function captureDraft(mode, eventId) {
-    const p = mode === 'edit' ? 'edit-' : '';
-    return {
-      mode, eventId:eventId || null,
-      title:document.getElementById(`${p}evt-title`)?.value || '',
-      category:document.getElementById(`${p}evt-cat`)?.value || 'GENERAL',
-      start_date:document.getElementById(`${p}evt-start-date`)?.value || '',
-      start_time:document.getElementById(`${p}evt-start-time`)?.value || '',
-      end_date:document.getElementById(`${p}evt-end-date`)?.value || '',
-      end_time:document.getElementById(`${p}evt-end-time`)?.value || '',
-      description:document.getElementById(`${p}evt-description`)?.value || document.getElementById(`${p}evt-desc`)?.value || '',
-      visibility:document.getElementById(`${p}evt-visibility`)?.value || '',
-      people:Array.from(document.querySelectorAll(`input[name="${mode==='edit'?'edit_target_persons':'target_persons'}"]:checked`)).map(x=>String(x.value)),
-      time_zone:getTimeZone(), saved_at:new Date().toISOString()
-    };
+  async function getEvents(){try{return eventList(await fetchAPI('/api/events'));}catch(_){try{const r=await fetch('/api/events',{credentials:'same-origin'});return r.ok?eventList(await r.json()):[];}catch(__){return [];}}}
+  const sameDraft=(e,v)=>String(e?.title||'').trim().toLowerCase()===String(v.title||'').trim().toLowerCase()&&eventDate(e)===v.start_date;
+  async function waitForPersistence(v,attempts=8){for(let i=0;i<attempts;i++){const found=(await getEvents()).find(e=>sameDraft(e,v));if(found)return found;await new Promise(r=>setTimeout(r,250));}return null;}
+  async function fallbackPersist(v){
+    const payload={title:v.title,category:v.category,start_date:v.start_date,start_time:v.start_time,end_date:v.end_date||v.start_date,end_time:v.end_time,description:v.description,visibility:v.visibility,target_person_ids:v.people,person_ids:v.people,time_zone:v.time_zone};
+    try{const r=await fetch('/api/events',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok)return null;try{return await r.json();}catch(_){return {};}}catch(_){return null;}
+  }
+  function saveError(){alert('FEMC could not confirm that this event was saved. Your complete scheduler draft has been kept safely. Please try Save again after checking the form.');}
+
+  async function insightsFor(v){const history=await getEvents();const other=history.filter(e=>String(e.id||e.event_id||'')!==String(v.eventId||''));const sameDay=other.filter(e=>eventDate(e)===v.start_date);const samePerson=other.filter(e=>normalize(e.category)===normalize(v.category)&&(e.target_person_ids||e.person_ids||[]).map(String).some(id=>(v.people||[]).includes(id)));const titleMatch=other.filter(e=>String(e.title||'').trim().toLowerCase()===String(v.title||'').trim().toLowerCase());const around=other.filter(e=>{const a=isoDay(eventDate(e)),b=isoDay(v.start_date);return a!==null&&b!==null&&Math.abs(a-b)<=7;}).sort((a,b)=>eventDate(a).localeCompare(eventDate(b)));return {sameDay,samePerson,titleMatch,around};}
+  function rows(list,kind){if(!list?.length)return '';return list.slice(0,12).map((e,i)=>`<button type="button" data-femc-related="${kind}:${i}" style="width:100%;text-align:left;border:1px solid rgba(127,127,127,.18);background:rgba(127,127,127,.05);border-radius:.65rem;padding:.75rem;margin:.35rem 0;cursor:pointer;"><strong>${esc(e.title||'Family event')}</strong><br><span style="font-size:.85rem;opacity:.75;">${esc(longDate(eventDate(e)))} · ${esc(e.category||'EVENT')}</span></button>`).join('');}
+
+  async function reopen(){const d=clone(activeDraft||loadDraft());if(!d)return;if(d.mode==='edit'&&editOpenOriginal&&d.eventId)await editOpenOriginal(d.eventId);else if(createOpenOriginal)await createOpenOriginal();else return;setTimeout(()=>{restoreDraft(d);const f=document.querySelector(d.mode==='edit'?'form[onsubmit*="submitPracticeEventEdit"]':'form[onsubmit*="submitCreateEvent"]');addControls(f,d.mode==='edit'?'edit-':'');wireDraft(f,d.mode,d.eventId);saveDraft(captureDraft(d.mode,d.eventId));},80);}
+  async function returnToScheduler(){closeModal();await reopen();}
+  function openReview(){if(!activeDraft||!activeInsights)return;const c=document.getElementById('modal-container');if(!c)return;const n=delta(activeDraft.start_date);const focus=activeInsights.titleMatch.length?activeInsights.titleMatch:activeInsights.samePerson.length?activeInsights.samePerson:activeInsights.sameDay;c.innerHTML=`<div class="modal-overlay" style="align-items:stretch;justify-content:flex-end;"><aside style="width:min(520px,100vw);height:100%;background:var(--surface,#fff);padding:1rem 1rem 2rem;overflow:auto;"><div style="display:flex;justify-content:space-between;align-items:center;"><div class="card-title">🌸 ${n<0?'Mayil’s Past-Date Review':'Mayil’s Related Family Records'}</div><button type="button" class="btn btn-outline btn-sm" id="femc-review-close">× Close</button></div><div style="margin:1rem 0;padding:.85rem;border-radius:.7rem;background:rgba(127,127,127,.08);"><strong>${esc(activeDraft.title||'Untitled event')}</strong><br>${esc(longDate(activeDraft.start_date))} · ${esc(relative(activeDraft.start_date))}<br><span style="font-size:.8rem;opacity:.72;">Timezone: ${esc(tz())}</span></div>${n<0?'<div>This selected event is in the past. Your exact scheduler draft is preserved.</div>':''}${focus.length?`<h4>Most relevant record${focus.length>1?'s':''}</h4>${rows(focus,'focus')}`:''}${activeInsights.sameDay.length?`<h4>Same-date records</h4>${rows(activeInsights.sameDay,'sameDay')}`:''}${activeInsights.around.length?`<h4>Related events around this date</h4>${rows(activeInsights.around,'around')}`:''}<div style="position:sticky;bottom:0;padding-top:1rem;background:var(--surface,#fff);"><button type="button" class="btn" id="femc-review-return">← Return to Event Scheduler</button></div></aside></div>`;c.style.display='block';document.getElementById('femc-review-close').onclick=returnToScheduler;document.getElementById('femc-review-return').onclick=returnToScheduler;}
+  async function mayilCheck(v){activeDraft=clone(v);saveDraft(activeDraft);activeInsights=await insightsFor(v);const c=document.getElementById('modal-container');if(!c)return true;const n=delta(v.start_date);const m=[`📅 <strong>Selected:</strong> ${esc(longDate(v.start_date))} · ${esc(relative(v.start_date))}`,`🌐 <strong>Timezone:</strong> ${esc(tz())} · <strong>Today:</strong> ${esc(longDate(todayISO()))}`];if(n<0)m.push('🟠 This event is in the past. Mayil is checking whether this is intentional.');if(activeInsights.titleMatch.length)m.push(`🌸 Mayil found the same title previously recorded on ${esc(longDate(eventDate(activeInsights.titleMatch[0])))}.`);else if(activeInsights.samePerson.length)m.push(`🌸 Mayil found a related family milestone previously recorded on ${esc(longDate(eventDate(activeInsights.samePerson[0])))}.`);if(activeInsights.sameDay.length)m.push(`✨ Mayil recognized ${activeInsights.sameDay.length} existing family record${activeInsights.sameDay.length===1?'':'s'} on this same date.`);return await new Promise(resolve=>{c.innerHTML=`<div class="modal-overlay"><div class="modal-card" style="max-width:620px;"><div class="card-header"><div class="card-title">🌸 Mayil Event Check</div></div><div style="padding:.3rem 0 1rem;">${m.map(x=>`<div style="padding:.65rem .75rem;margin:.45rem 0;border-radius:.6rem;background:rgba(127,127,127,.07);line-height:1.45;">${x}</div>`).join('')}</div><div style="font-size:.9rem;opacity:.8;margin-bottom:1rem;">Review preserves this unsaved scheduler draft. Save will be confirmed against the event store before the draft is cleared.</div><div style="display:flex;justify-content:flex-end;gap:.5rem;flex-wrap:wrap;"><button type="button" class="btn btn-outline" id="femc-mayil-review">Review Details</button><button type="button" class="btn" id="femc-mayil-confirm">Save with This Date</button></div></div></div>`;c.style.display='block';document.getElementById('femc-mayil-review').onclick=()=>{closeModal();setTimeout(openReview,0);resolve(false);};document.getElementById('femc-mayil-confirm').onclick=()=>{closeModal();resolve(true);};});}
+
+  function enhanceOne(el,type){if(!el||el.dataset.femcPickerV5)return;el.dataset.femcPickerV5='1';el.type=type;el.inputMode=type==='time'?'numeric':'text';const hint=document.createElement('div');hint.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.35rem;font-size:.78rem;opacity:.72;';hint.innerHTML=`<span>${type==='date'?'Type the date or use the calendar':'Type the time or use the clock'}</span><button type="button" class="btn btn-outline btn-sm" style="padding:.2rem .45rem;">${type==='date'?'📅 Calendar':'🕒 Clock'}</button>`;el.insertAdjacentElement('afterend',hint);hint.querySelector('button').onclick=()=>{try{el.showPicker?.();}catch(_){el.focus();}};}
+  function enhanceDateTime(prefix=''){['start-date','end-date'].forEach(x=>enhanceOne(document.getElementById(`${prefix}evt-${x}`),'date'));['start-time','end-time'].forEach(x=>enhanceOne(document.getElementById(`${prefix}evt-${x}`),'time'));}
+  function addControls(form,prefix){if(!form)return;enhanceDateTime(prefix);const mode=prefix==='edit-'?'edit':'create';const eventId=form.dataset.eventId||null;wireDraft(form,mode,eventId);if(form.querySelector('.femc-event-intelligence'))return;const input=document.getElementById(`${prefix}evt-start-date`);if(!input)return;const box=document.createElement('div');box.className='form-group femc-event-intelligence';box.innerHTML=`<label class="form-label">How should Mayil understand this event?</label><div style="display:flex;gap:.5rem;flex-wrap:wrap;"><button type="button" class="btn btn-outline btn-sm" data-t="past">⏪ Past</button><button type="button" class="btn btn-outline btn-sm" data-t="today">● Today</button><button type="button" class="btn btn-outline btn-sm" data-t="future">⏩ Future</button></div><div class="femc-date-status" style="margin-top:.65rem;padding:.65rem;border-radius:.6rem;background:rgba(127,127,127,.08);"></div>`;input.closest('.form-group')?.before(box);const status=box.querySelector('.femc-date-status');const refresh=()=>status.innerHTML=input.value?`📅 <strong>${esc(longDate(input.value))}</strong><br>${esc(relative(input.value))}<br><span style="font-size:.78rem;opacity:.72;">Timezone: ${esc(tz())}</span>`:`Choose a date to see Mayil’s guidance.<br><span style="font-size:.78rem;opacity:.72;">Timezone: ${esc(tz())}</span>`;input.addEventListener('change',refresh);refresh();box.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{const base=todayISO(),next=b.dataset.t==='past'?shiftISO(base,-1):b.dataset.t==='future'?shiftISO(base,1):base;input.value=next;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));});}
+
+  function cleanEvent(evt){if(!evt)return {preventDefault(){}};return {preventDefault(){},stopPropagation(){},target:evt.target,currentTarget:evt.currentTarget};}
+  async function runSave(original,ctx,args,v){
+    if(saving)return; saving=true;
+    try{
+      const result=await original.apply(ctx,args);
+      let found=await waitForPersistence(v,6);
+      if(!found){const fallback=await fallbackPersist(v);if(fallback)found=await waitForPersistence(v,8);}
+      if(found){clearDraft();activeDraft=null;activeInsights=null;setTimeout(refreshFreshness,350);return result;}
+      saveDraft(v);saveError();return result;
+    }catch(err){saveDraft(v);console.error('FEMC event save failed',err);saveError();throw err;}finally{saving=false;}
+  }
+  function installSubmit(){
+    if(!createSubmitOriginal&&typeof window.submitCreateEvent==='function'&&!window.submitCreateEvent.__femcV5){createSubmitOriginal=window.submitCreateEvent;const guarded=async function(evt){evt?.preventDefault?.();const v=captureDraft('create');if(!v.start_date){alert('Please choose an event date.');return false;}if(!(await mayilCheck(v)))return false;return runSave(createSubmitOriginal,this,[cleanEvent(evt)],v);};guarded.__femcV5=true;window.submitCreateEvent=guarded;}
+    if(!editSubmitOriginal&&typeof window.submitPracticeEventEdit==='function'&&!window.submitPracticeEventEdit.__femcV5){editSubmitOriginal=window.submitPracticeEventEdit;const guarded=async function(evt,eventId){evt?.preventDefault?.();const v=captureDraft('edit',eventId);if(!v.start_date){alert('Please choose an event date.');return false;}if(!(await mayilCheck(v)))return false;return runSave(editSubmitOriginal,this,[cleanEvent(evt),eventId],v);};guarded.__femcV5=true;window.submitPracticeEventEdit=guarded;}
+  }
+  function installOpen(){
+    if(!createOpenOriginal&&typeof window.openCreateEventModal==='function'&&!window.openCreateEventModal.__femcV5){createOpenOriginal=window.openCreateEventModal;const wrapped=async function(){const r=await createOpenOriginal.apply(this,arguments);setTimeout(()=>{const f=document.querySelector('form[onsubmit*="submitCreateEvent"]');addControls(f,'');const d=loadDraft();if(d&&d.mode==='create')restoreDraft(d);},0);return r;};wrapped.__femcV5=true;window.openCreateEventModal=wrapped;}
+    if(!editOpenOriginal&&typeof window.openPracticeEventEditor==='function'&&!window.openPracticeEventEditor.__femcV5){editOpenOriginal=window.openPracticeEventEditor;const wrapped=async function(id){const r=await editOpenOriginal.apply(this,arguments);setTimeout(()=>addControls(document.querySelector('form[onsubmit*="submitPracticeEventEdit"]'),'edit-'),0);return r;};wrapped.__femcV5=true;window.openPracticeEventEditor=wrapped;}
   }
 
-  function restoreDraft(d) {
-    if (!d) return;
-    const p = d.mode === 'edit' ? 'edit-' : '';
-    const set = (id, value) => {
-      const el = document.getElementById(id);
-      if (!el || value === undefined) return;
-      el.value = value;
-      el.dispatchEvent(new Event('input', {bubbles:true}));
-      el.dispatchEvent(new Event('change', {bubbles:true}));
-    };
-    set(`${p}evt-title`, d.title); set(`${p}evt-cat`, d.category); set(`${p}evt-start-date`, d.start_date); set(`${p}evt-start-time`, d.start_time); set(`${p}evt-end-date`, d.end_date); set(`${p}evt-end-time`, d.end_time);
-    const desc = document.getElementById(`${p}evt-description`) || document.getElementById(`${p}evt-desc`);
-    if (desc) { desc.value = d.description || ''; desc.dispatchEvent(new Event('input', {bubbles:true})); desc.dispatchEvent(new Event('change', {bubbles:true})); }
-    set(`${p}evt-visibility`, d.visibility);
-    const name = d.mode === 'edit' ? 'edit_target_persons' : 'target_persons';
-    document.querySelectorAll(`input[name="${name}"]`).forEach(x => { x.checked = (d.people || []).includes(String(x.value)); x.dispatchEvent(new Event('change', {bubbles:true})); });
-  }
+  function textDateToISO(text){const m=String(text||'').match(/\b([A-Z][a-z]{2})\s+(\d{1,2}),\s*(\d{4})\b/);if(m){const months={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};return `${m[3]}-${pad(months[m[1]]+1)}-${pad(m[2])}`;}const ymd=String(text||'').match(/\b(\d{4})-(\d{2})-(\d{2})\b/);return ymd?ymd[0]:'';}
+  function sectionByHeading(label){return Array.from(document.querySelectorAll('h1,h2,h3,h4,.card-title,.section-title,strong')).filter(e=>normalize(e.textContent)===normalize(label)).map(e=>e.closest('.card,section,div')||e.parentElement);}
+  function rowCandidates(root){if(!root)return[];return Array.from(root.querySelectorAll('div,li,article')).filter(e=>{const t=(e.innerText||'').trim();if(!t)return false;const d=textDateToISO(t);if(!d)return false;const kids=Array.from(e.children).filter(c=>textDateToISO(c.innerText||''));return !kids.length;});}
+  function filterPastUpcoming(){sectionByHeading('Upcoming Family Events').forEach(root=>rowCandidates(root).forEach(row=>{const d=textDateToISO(row.innerText);if(d&&delta(d)<0){row.style.display='none';row.dataset.femcPastHidden='1';}}));}
+  function addReminderEdit(){sectionByHeading('Reminders & Alerts').forEach(root=>rowCandidates(root).forEach(row=>{if(row.dataset.femcReminderEnhanced)return;row.dataset.femcReminderEnhanced='1';const d=textDateToISO(row.innerText);if(d&&delta(d)<0){row.style.display='none';return;}const btn=document.createElement('button');btn.type='button';btn.className='btn btn-outline btn-sm';btn.textContent='Edit';btn.style.marginLeft='.5rem';btn.onclick=()=>openReminderEditor(row,d);row.appendChild(btn);}));}
+  function openReminderEditor(row,date){const c=document.getElementById('modal-container');if(!c)return;const title=(row.querySelector('strong,h4,h3')?.textContent||row.innerText.split('\n')[0]||'Reminder').trim();c.innerHTML=`<div class="modal-overlay"><div class="modal-card" style="max-width:520px;"><div class="card-header"><div class="card-title">🔔 Edit Reminder</div></div><label class="form-label">Reminder</label><input id="femc-rem-title" class="form-control" value="${esc(title)}"><label class="form-label" style="margin-top:.8rem;display:block;">Date</label><input id="femc-rem-date" class="form-control" type="date" value="${esc(date||'')}"><div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem;"><button type="button" class="btn btn-outline" id="femc-rem-cancel">Cancel</button><button type="button" class="btn" id="femc-rem-save">Save Reminder</button></div></div></div>`;c.style.display='block';document.getElementById('femc-rem-cancel').onclick=()=>closeModal();document.getElementById('femc-rem-save').onclick=async()=>{const nt=document.getElementById('femc-rem-title').value.trim(),nd=document.getElementById('femc-rem-date').value;if(!nt||!nd){alert('Please enter a reminder and date.');return;}const id=row.dataset.reminderId||row.dataset.id||row.getAttribute('data-reminder-id');if(!id){alert('This reminder does not expose a stable record ID yet, so FEMC will not pretend it was saved. Please open the reminder from the Reminders page and edit it there.');return;}try{const r=await fetch(`/api/reminders/${encodeURIComponent(id)}`,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:nt,name:nt,due_date:nd,date:nd})});if(!r.ok)throw new Error('save failed');closeModal();setTimeout(refreshFreshness,250);}catch(_){alert('Reminder changes could not be confirmed. The existing reminder was not overwritten silently.');}};}
+  function refreshFreshness(){filterPastUpcoming();addReminderEdit();}
 
-  function wireDraftPersistence(form, mode, eventId) {
-    if (!form || form.dataset.femcDraftPersistence) return;
-    form.dataset.femcDraftPersistence = '1';
-    const persist = () => {
-      const d = captureDraft(mode, eventId);
-      if (d.title || d.start_date || d.description || d.people.length) saveDraft(d);
-    };
-    form.addEventListener('input', persist, true);
-    form.addEventListener('change', persist, true);
-  }
-
-  async function reopenSchedulerFromDraft() {
-    const d = clone(activeDraft || loadDraft());
-    if (!d) return;
-    if (d.mode === 'edit' && editOpenOriginal && d.eventId) await editOpenOriginal(d.eventId);
-    else if (createOpenOriginal) await createOpenOriginal();
-    else return;
-    setTimeout(() => {
-      restoreDraft(d);
-      const form = document.querySelector(d.mode === 'edit' ? 'form[onsubmit*="submitPracticeEventEdit"]' : 'form[onsubmit*="submitCreateEvent"]');
-      addControls(form, d.mode === 'edit' ? 'edit-' : '');
-      wireDraftPersistence(form, d.mode, d.eventId);
-      saveDraft(captureDraft(d.mode, d.eventId));
-    }, 80);
-  }
-
-  async function insightsFor(v) {
-    let history = [];
-    try { history = eventList(await fetchAPI('/api/events')); } catch (_) {}
-    const other = history.filter(e => String(e.id || e.event_id || '') !== String(v.eventId || ''));
-    const sameDay = other.filter(e => eventDate(e) === v.start_date);
-    const samePerson = other.filter(e => normalize(e.category) === normalize(v.category) && (e.target_person_ids || e.person_ids || []).map(String).some(id => (v.people || []).includes(id)));
-    const titleMatch = other.filter(e => String(e.title || '').trim().toLowerCase() === String(v.title || '').trim().toLowerCase());
-    const around = other.filter(e => { const a = isoDay(eventDate(e)), b = isoDay(v.start_date); return a !== null && b !== null && Math.abs(a-b) <= 7; }).sort((a,b) => eventDate(a).localeCompare(eventDate(b)));
-    return {sameDay, samePerson, titleMatch, around};
-  }
-
-  function relatedRows(list, kind) {
-    if (!list?.length) return '<div style="opacity:.72;padding:.6rem 0;">No related records found.</div>';
-    return list.slice(0,12).map((e,i) => `<button type="button" class="femc-related-row" data-femc-related="${kind}:${i}" style="width:100%;text-align:left;border:1px solid rgba(127,127,127,.18);background:rgba(127,127,127,.05);border-radius:.65rem;padding:.75rem;margin:.35rem 0;cursor:pointer;"><strong>${esc(e.title || 'Family event')}</strong><br><span style="font-size:.85rem;opacity:.75;">${esc(longDate(eventDate(e)))} · ${esc(e.category || 'EVENT')}</span></button>`).join('');
-  }
-
-  async function returnToScheduler() { closeModal(); await reopenSchedulerFromDraft(); }
-
-  function openReviewDrawer() {
-    if (!activeDraft || !activeInsights) return;
-    const c = document.getElementById('modal-container'); if (!c) return;
-    const n = delta(activeDraft.start_date);
-    const focus = activeInsights.titleMatch.length ? activeInsights.titleMatch : activeInsights.samePerson.length ? activeInsights.samePerson : activeInsights.sameDay;
-    const title = n < 0 ? 'Mayil’s Past-Date Review' : 'Mayil’s Related Family Records';
-    c.innerHTML = `<div class="modal-overlay" style="align-items:stretch;justify-content:flex-end;"><aside style="width:min(520px,100vw);height:100%;background:var(--surface,#fff);padding:1rem 1rem 2rem;overflow:auto;box-shadow:-10px 0 30px rgba(0,0,0,.2);"><div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;"><div class="card-title">🌸 ${esc(title)}</div><button type="button" class="btn btn-outline btn-sm" id="femc-review-close">× Close</button></div><div style="margin:1rem 0;padding:.85rem;border-radius:.7rem;background:rgba(127,127,127,.08);"><strong>${esc(activeDraft.title || 'Untitled event')}</strong><br>${esc(longDate(activeDraft.start_date))} · ${esc(relative(activeDraft.start_date))}<br><span style="font-size:.8rem;opacity:.72;">Timezone: ${esc(getTimeZone())}</span></div>${n<0?`<div style="margin:.8rem 0;line-height:1.5;">This selected event is in the past. Review the precise date above, then inspect only related family records if useful. Your event draft is preserved exactly and will reopen when you return.</div>`:''}${focus.length?`<h4 style="margin:1.2rem 0 .4rem;">Most relevant record${focus.length>1?'s':''}</h4>${relatedRows(focus,'focus')}`:''}${activeInsights.sameDay.length?`<h4 style="margin:1.2rem 0 .4rem;">Same-date records</h4>${relatedRows(activeInsights.sameDay,'sameDay')}`:''}${activeInsights.around.length?`<h4 style="margin:1.2rem 0 .4rem;">Related events around this date</h4>${relatedRows(activeInsights.around,'around')}`:''}<div id="femc-related-detail" style="margin-top:1rem;"></div><div style="position:sticky;bottom:0;background:var(--surface,#fff);padding-top:1rem;"><button type="button" class="btn" id="femc-review-return">← Return to Event Scheduler</button></div></aside></div>`;
-    c.style.display = 'block';
-    document.getElementById('femc-review-close').onclick = returnToScheduler;
-    document.getElementById('femc-review-return').onclick = returnToScheduler;
-    c.querySelectorAll('[data-femc-related]').forEach(btn => btn.onclick = () => {
-      const [kind,index] = btn.dataset.femcRelated.split(':'); const e = (activeInsights[kind] || [])[Number(index)]; const detail = document.getElementById('femc-related-detail'); if (!e || !detail) return;
-      detail.innerHTML = `<div style="padding:1rem;border-radius:.7rem;border:1px solid rgba(127,127,127,.18);"><strong>${esc(e.title || 'Family event')}</strong><p>${esc(longDate(eventDate(e)))}</p><p>${esc(e.description || e.details || 'No additional details recorded.')}</p><button type="button" class="btn btn-outline btn-sm" id="femc-related-back">Back to list</button></div>`;
-      document.getElementById('femc-related-back').onclick = () => { detail.innerHTML = ''; };
-    });
-  }
-
-  async function mayilCheck(v) {
-    activeDraft = clone(v); saveDraft(activeDraft); activeInsights = await insightsFor(v);
-    const c = document.getElementById('modal-container'); if (!c) return true;
-    const n = delta(v.start_date);
-    const messages = [`📅 <strong>Selected:</strong> ${esc(longDate(v.start_date))} · ${esc(relative(v.start_date))}`, `🌐 <strong>Timezone:</strong> ${esc(getTimeZone())} · <strong>Today:</strong> ${esc(longDate(todayISO()))}`];
-    if (n < 0) messages.push('🟠 This event is in the past. Mayil is checking whether this is intentional.');
-    if (activeInsights.titleMatch.length) messages.push(`🌸 Mayil found an existing record with the same title on ${esc(longDate(eventDate(activeInsights.titleMatch[0])))}.`);
-    else if (activeInsights.samePerson.length) messages.push(`🌸 Mayil found a related family milestone previously recorded on ${esc(longDate(eventDate(activeInsights.samePerson[0])))}.`);
-    if (activeInsights.sameDay.length) messages.push(`✨ Mayil recognized ${activeInsights.sameDay.length} existing family record${activeInsights.sameDay.length===1?'':'s'} on this same date.`);
-    return await new Promise(resolve => {
-      c.innerHTML = `<div class="modal-overlay"><div class="modal-card" style="max-width:620px;"><div class="card-header"><div class="card-title">🌸 Mayil Event Check</div></div><div style="padding:.3rem 0 1rem;">${messages.map(x=>`<div style="padding:.65rem .75rem;margin:.45rem 0;border-radius:.6rem;background:rgba(127,127,127,.07);line-height:1.45;">${x}</div>`).join('')}</div><div style="font-size:.9rem;opacity:.8;margin-bottom:1rem;">Reviewing details preserves this unsaved scheduler draft in this browser session. Return will reopen the same Event Scheduler with every field intact.</div><div style="display:flex;justify-content:flex-end;gap:.5rem;flex-wrap:wrap;"><button type="button" class="btn btn-outline" id="femc-mayil-review">Review Details</button><button type="button" class="btn" id="femc-mayil-confirm">Save with This Date</button></div></div></div>`;
-      c.style.display = 'block';
-      document.getElementById('femc-mayil-review').onclick = () => { closeModal(); setTimeout(openReviewDrawer, 0); resolve(false); };
-      document.getElementById('femc-mayil-confirm').onclick = () => { closeModal(); resolve(true); };
-    });
-  }
-
-  function enhanceOneInput(el, type) {
-    if (!el || el.dataset.femcPickerEnhanced) return;
-    el.dataset.femcPickerEnhanced = '1'; el.type = type; el.inputMode = type === 'time' ? 'numeric' : 'text';
-    const hint = document.createElement('div'); hint.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.35rem;font-size:.78rem;opacity:.72;';
-    hint.innerHTML = `<span>${type==='date'?'Type the date or use the calendar':'Type the time or use the clock'}</span><button type="button" class="btn btn-outline btn-sm" style="padding:.2rem .45rem;" data-femc-open-picker>${type==='date'?'📅 Calendar':'🕒 Clock'}</button>`;
-    el.insertAdjacentElement('afterend', hint);
-    hint.querySelector('[data-femc-open-picker]').onclick = () => { try { el.showPicker?.(); } catch (_) { el.focus(); } };
-  }
-
-  function enhanceDateTimeInputs(prefix='') {
-    ['start-date','end-date'].forEach(x => enhanceOneInput(document.getElementById(`${prefix}evt-${x}`), 'date'));
-    ['start-time','end-time'].forEach(x => enhanceOneInput(document.getElementById(`${prefix}evt-${x}`), 'time'));
-  }
-
-  function addControls(form, prefix) {
-    if (!form) return;
-    enhanceDateTimeInputs(prefix);
-    const mode = prefix === 'edit-' ? 'edit' : 'create';
-    const eventId = form.dataset.eventId || null;
-    wireDraftPersistence(form, mode, eventId);
-    if (form.querySelector('.femc-event-intelligence')) return;
-    const input = document.getElementById(`${prefix}evt-start-date`); if (!input) return;
-    const box = document.createElement('div'); box.className = 'form-group femc-event-intelligence';
-    box.innerHTML = `<label class="form-label">How should Mayil understand this event?</label><div style="display:flex;gap:.5rem;flex-wrap:wrap;"><button type="button" class="btn btn-outline btn-sm" data-t="past">⏪ Past</button><button type="button" class="btn btn-outline btn-sm" data-t="today">● Today</button><button type="button" class="btn btn-outline btn-sm" data-t="future">⏩ Future</button></div><div class="femc-date-status" style="margin-top:.65rem;padding:.65rem;border-radius:.6rem;background:rgba(127,127,127,.08);"></div>`;
-    input.closest('.form-group')?.before(box);
-    const status = box.querySelector('.femc-date-status');
-    const refresh = () => { status.innerHTML = input.value ? `📅 <strong>${esc(longDate(input.value))}</strong><br>${esc(relative(input.value))}<br><span style="font-size:.78rem;opacity:.72;">Timezone: ${esc(getTimeZone())}</span>` : `Choose a date to see Mayil’s guidance.<br><span style="font-size:.78rem;opacity:.72;">Timezone: ${esc(getTimeZone())}</span>`; };
-    input.addEventListener('change', refresh); refresh();
-    box.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
-      const base = todayISO(); const next = b.dataset.t === 'past' ? shiftISO(base,-1) : b.dataset.t === 'future' ? shiftISO(base,1) : base;
-      input.value = next; input.dispatchEvent(new Event('input', {bubbles:true})); input.dispatchEvent(new Event('change', {bubbles:true}));
-    });
-  }
-
-  async function runOriginalSubmit(original, ctx, args) {
-    const result = await original.apply(ctx, args);
-    clearDraft(); activeDraft = null; activeInsights = null;
-    return result;
-  }
-
-  function installSubmitGuards() {
-    if (!createSubmitOriginal && typeof window.submitCreateEvent === 'function' && !window.submitCreateEvent.__femcV4) {
-      createSubmitOriginal = window.submitCreateEvent;
-      const guarded = async function(evt) {
-        evt?.preventDefault?.(); const v = captureDraft('create'); if (!v.start_date) { alert('Please choose an event date.'); return; }
-        if (!(await mayilCheck(v))) return;
-        return runOriginalSubmit(createSubmitOriginal, this, [evt]);
-      };
-      guarded.__femcV4 = true; window.submitCreateEvent = guarded;
-    }
-    if (!editSubmitOriginal && typeof window.submitPracticeEventEdit === 'function' && !window.submitPracticeEventEdit.__femcV4) {
-      editSubmitOriginal = window.submitPracticeEventEdit;
-      const guarded = async function(evt,eventId) {
-        evt?.preventDefault?.(); const v = captureDraft('edit', eventId); if (!v.start_date) { alert('Please choose an event date.'); return; }
-        if (!(await mayilCheck(v))) return;
-        return runOriginalSubmit(editSubmitOriginal, this, [evt,eventId]);
-      };
-      guarded.__femcV4 = true; window.submitPracticeEventEdit = guarded;
-    }
-  }
-
-  function installOpenWrappers() {
-    if (!createOpenOriginal && typeof window.openCreateEventModal === 'function' && !window.openCreateEventModal.__femcV4) {
-      createOpenOriginal = window.openCreateEventModal;
-      const wrapped = async function() {
-        const r = await createOpenOriginal.apply(this, arguments);
-        setTimeout(() => { const form = document.querySelector('form[onsubmit*="submitCreateEvent"]'); addControls(form,''); const d = loadDraft(); if (d && d.mode === 'create') restoreDraft(d); }, 0);
-        return r;
-      };
-      wrapped.__femcV4 = true; window.openCreateEventModal = wrapped;
-    }
-    if (!editOpenOriginal && typeof window.openPracticeEventEditor === 'function' && !window.openPracticeEventEditor.__femcV4) {
-      editOpenOriginal = window.openPracticeEventEditor;
-      const wrapped = async function(id) { const r = await editOpenOriginal.apply(this, arguments); setTimeout(() => addControls(document.querySelector('form[onsubmit*="submitPracticeEventEdit"]'),'edit-'),0); return r; };
-      wrapped.__femcV4 = true; window.openPracticeEventEditor = wrapped;
-    }
-  }
-
-  function installAll() {
-    installSubmitGuards(); installOpenWrappers();
-    addControls(document.querySelector('form[onsubmit*="submitCreateEvent"]'),'');
-    addControls(document.querySelector('form[onsubmit*="submitPracticeEventEdit"]'),'edit-');
-  }
-
-  installAll();
-  new MutationObserver(installAll).observe(document.documentElement,{childList:true,subtree:true});
+  function installAll(){installSubmit();installOpen();addControls(document.querySelector('form[onsubmit*="submitCreateEvent"]'),'');addControls(document.querySelector('form[onsubmit*="submitPracticeEventEdit"]'),'edit-');refreshFreshness();}
+  installAll();new MutationObserver(()=>{installAll();}).observe(document.documentElement,{childList:true,subtree:true});setInterval(refreshFreshness,1500);
 })();
 </script>'''
     runtime.HTML_TEMPLATE = html.replace('</body>', script + '\n</body>')
