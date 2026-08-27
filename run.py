@@ -13,6 +13,7 @@ from api_events_contract_repair_patch import install as install_api_events_contr
 from atomic_event_save_repair_patch import install as install_atomic_event_save_repair
 from mayil_schedule_awareness_patch import install as install_mayil_schedule_awareness
 from event_venue_awareness_patch import install as install_event_venue_awareness
+from edit_event_context_repair_patch import install as install_edit_event_context_repair
 
 install(runtime)
 install_event_edit(runtime)
@@ -28,6 +29,7 @@ install_api_events_contract_repair(runtime)
 install_atomic_event_save_repair(runtime)
 install_mayil_schedule_awareness(runtime)
 install_event_venue_awareness(runtime)
+install_edit_event_context_repair(runtime)
 
 
 if __name__ == "__main__":
