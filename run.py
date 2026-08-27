@@ -9,6 +9,7 @@ from practice_shared_celebration_context_patch import install as install_practic
 from event_intelligence_patch import install as install_event_intelligence
 from practice_runtime_fix_patch import install as install_practice_runtime_fix
 from practice_event_store_repair_patch import install as install_practice_event_store_repair
+from api_events_contract_repair_patch import install as install_api_events_contract_repair
 
 install(runtime)
 install_event_edit(runtime)
@@ -20,6 +21,7 @@ install_practice_shared_celebration_context(runtime)
 install_event_intelligence(runtime)
 install_practice_runtime_fix(runtime)
 install_practice_event_store_repair(runtime)
+install_api_events_contract_repair(runtime)
 
 
 if __name__ == "__main__":
