@@ -12,6 +12,7 @@ from practice_event_store_repair_patch import install as install_practice_event_
 from api_events_contract_repair_patch import install as install_api_events_contract_repair
 from atomic_event_save_repair_patch import install as install_atomic_event_save_repair
 from mayil_schedule_awareness_patch import install as install_mayil_schedule_awareness
+from event_venue_awareness_patch import install as install_event_venue_awareness
 
 install(runtime)
 install_event_edit(runtime)
@@ -26,6 +27,7 @@ install_practice_event_store_repair(runtime)
 install_api_events_contract_repair(runtime)
 install_atomic_event_save_repair(runtime)
 install_mayil_schedule_awareness(runtime)
+install_event_venue_awareness(runtime)
 
 
 if __name__ == "__main__":
