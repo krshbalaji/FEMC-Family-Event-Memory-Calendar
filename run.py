@@ -15,6 +15,7 @@ from mayil_schedule_awareness_patch import install as install_mayil_schedule_awa
 from event_venue_awareness_patch import install as install_event_venue_awareness
 from edit_event_context_repair_patch import install as install_edit_event_context_repair
 from event_edit_delete_context_patch import install as install_event_edit_delete_context
+from event_lifecycle_repair_patch import install as install_event_lifecycle_repair
 
 install(runtime)
 install_event_edit(runtime)
@@ -32,6 +33,7 @@ install_mayil_schedule_awareness(runtime)
 install_event_venue_awareness(runtime)
 install_edit_event_context_repair(runtime)
 install_event_edit_delete_context(runtime)
+install_event_lifecycle_repair(runtime)
 
 
 if __name__ == "__main__":
